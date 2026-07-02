@@ -1,0 +1,32 @@
+{
+  "ociVersion": "1.0.0",
+  "process": {
+    "terminal": false,
+    "user": { "uid": 0, "gid": 0 },
+    "args": [
+      "homebridge", 
+      "-U", 
+      "/mnt/SSD/Config/OpenWrt/UXC/HomeBridge", 
+      "-I", 
+      "-C"
+    ],
+    "env": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "HOME=/root",
+      "TZ=Europe/London"
+    ],
+    "cwd": "/homebridge"
+  },
+  "root": {
+    "path": "rootfs",
+    "readonly": false
+  },
+  "linux": {
+    "namespaces": [
+      { "type": "pid" },
+      { "type": "ipc" },
+      { "type": "uts" },
+      { "type": "mount" }
+    ]
+  }
+}
