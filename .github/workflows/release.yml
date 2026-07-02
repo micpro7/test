@@ -17,17 +17,23 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Fetch Homebridge Version
+        id: version
+        run: |
+          # Query npm for the latest homebridge version to use as the release tag
+          HB_VERSION=$(npm show homebridge version)
+          
+          # Creates a strict semantic tag like "v1.8.0"
+          RELEASE_TAG="v${HB_VERSION}"
+          
+          echo "HB_VERSION=${HB_VERSION}" >> $GITHUB_ENV
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Generate Date for Versioning
-        id: date
-        run: |
-          # Grabs the current date in yyyy-mm-dd format and saves it as an environment variable
-          echo "VERSION_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Build and Export Rootfs (linux/arm64)
         run: |
@@ -54,7 +60,7 @@ jobs:
       - name: Publish Versioned Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION_DATE }}
-          name: ${{ env.VERSION_DATE }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Homebridge ${{ env.RELEASE_TAG }}"
           files: homebridge-arm64.tar.gz
           make_latest: true
