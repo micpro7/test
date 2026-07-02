@@ -4,11 +4,9 @@
     "terminal": false,
     "user": { "uid": 0, "gid": 0 },
     "args": [
-      "homebridge", 
-      "-U", 
-      "/mnt/SSD/Config/OpenWrt/UXC/HomeBridge", 
-      "-I", 
-      "-C"
+      "/bin/sh",
+      "-c",
+      "homebridge -U /mnt/SSD/Config/OpenWrt/UXC/HomeBridge -I -C"
     ],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
