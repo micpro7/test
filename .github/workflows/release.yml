@@ -39,16 +39,22 @@ jobs:
 
           docker create --name temp_container homebridge-uxc-arm64:latest
           mkdir -p bundle/rootfs
-          docker export temp_container | tar -x -C bundle/rootfs/
+          
+          # USE SUDO to preserve the original 0:0 container ownership
+          docker export temp_container > rootfs.tar
+          sudo tar -xf rootfs.tar -C bundle/rootfs/
           docker rm temp_container
+          rm rootfs.tar
 
       - name: Finalize OCI Bundle
         run: |
-          cp config.json bundle/
+          sudo cp config.json bundle/
           
-          # FIX: Change into the bundle directory first so that config.json 
-          # and rootfs are at the root level of the tarball archive.
-          cd bundle && tar -czf ../homebridge-arm64.tar.gz .
+          # Compress as root to permanently lock in the permissions
+          cd bundle && sudo tar -czf ../homebridge-arm64.tar.gz .
+          
+          # Hand ownership of the archive back to the runner for the upload step
+          sudo chown $USER:$USER ../homebridge-arm64.tar.gz
 
       - name: Publish Versioned Release
         uses: softprops/action-gh-release@v2
