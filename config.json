@@ -2,7 +2,10 @@
   "ociVersion": "1.0.0",
   "process": {
     "terminal": false,
-    "user": { "uid": 0, "gid": 0 },
+    "user": {
+      "uid": 0,
+      "gid": 0
+    },
     "args": [
       "/bin/sh",
       "-c",
@@ -21,10 +24,9 @@
   },
   "linux": {
     "namespaces": [
-      { "type": "pid" },
-      { "type": "ipc" },
-      { "type": "uts" },
-      { "type": "mount" }
+      {
+        "type": "mount"
+      }
     ]
   }
 }
