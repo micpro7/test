@@ -110,6 +110,3 @@ jobs:
             Fetched by your OpenWrt install script from:
             `.../releases/latest/download/homebridge-arm64.tar.gz`
           files: homebridge-arm64.tar.gz
-          name: "Homebridge ${{ env.RELEASE_TAG }}"
-          files: homebridge-arm64.tar.gz
-          make_latest: true
