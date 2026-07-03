@@ -9,7 +9,6 @@ jobs:
   build-and-release:
     runs-on: ubuntu-latest
     
-    # We require write permissions to update the GitHub Release
     permissions:
       contents: write
 
@@ -20,12 +19,8 @@ jobs:
       - name: Fetch Homebridge Version
         id: version
         run: |
-          # Query npm for the latest homebridge version to use as the release tag
           HB_VERSION=$(npm show homebridge version)
-          
-          # Creates a strict semantic tag like "v1.8.0"
           RELEASE_TAG="v${HB_VERSION}"
-          
           echo "HB_VERSION=${HB_VERSION}" >> $GITHUB_ENV
           echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
 
@@ -37,13 +32,11 @@ jobs:
 
       - name: Build and Export Rootfs (linux/arm64)
         run: |
-          # Build the image and load it into local docker daemon
           docker buildx build \
             --platform linux/arm64 \
             --load \
             -t homebridge-uxc-arm64:latest .
 
-          # Create dummy container and flatten filesystem
           docker create --name temp_container homebridge-uxc-arm64:latest
           mkdir -p bundle/rootfs
           docker export temp_container | tar -x -C bundle/rootfs/
@@ -51,11 +44,11 @@ jobs:
 
       - name: Finalize OCI Bundle
         run: |
-          # Copy the pre-defined config.json into the bundle
           cp config.json bundle/
           
-          # Compress to match the archive name your bash script downloads
-          tar -czf homebridge-arm64.tar.gz -C bundle .
+          # FIX: Change into the bundle directory first so that config.json 
+          # and rootfs are at the root level of the tarball archive.
+          cd bundle && tar -czf ../homebridge-arm64.tar.gz .
 
       - name: Publish Versioned Release
         uses: softprops/action-gh-release@v2
