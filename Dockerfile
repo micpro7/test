@@ -47,8 +47,9 @@ RUN apk add --no-cache \
         homebridge-config-ui-x@${CONFIG_UI_VERSION} \
     && npm cache clean --force \
     && mkdir -p /var/lib/homebridge/plugins \
-    && node -e "console.log(require('homebridge/package.json').version)" \
-    && node -e "console.log(require('homebridge-config-ui-x/package.json').version)"
+    && NPM_ROOT="$(npm root -g)" \
+    && node -e "console.log('homebridge', require(process.argv[1]).version)" "${NPM_ROOT}/homebridge/package.json" \
+    && node -e "console.log('homebridge-config-ui-x', require(process.argv[1]).version)" "${NPM_ROOT}/homebridge-config-ui-x/package.json"
 
 ENV HOME=/root \
     TZ=UTC \
