@@ -1,65 +1,115 @@
-name: Build and Release Homebridge UXC Bundle
+name: Build Homebridge UXC Bundle
+
+# Builds an OCI runtime bundle (rootfs/ + config.json) containing Alpine +
+# Node.js + Homebridge + Homebridge UI, packages it as homebridge-arm64.tar.gz,
+# and publishes/updates the "latest" GitHub release so that
+# https://github.com/<owner>/<repo>/releases/latest/download/homebridge-arm64.tar.gz
+# always resolves to the newest build. This is the exact URL your OpenWrt
+# install script (2.sh) downloads from.
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
+    inputs:
+      homebridge_version:
+        description: "homebridge npm version/tag to install (e.g. latest, 2.0.2)"
+        default: "latest"
+        required: false
+      config_ui_version:
+        description: "homebridge-config-ui-x npm version/tag to install"
+        default: "latest"
+        required: false
+  schedule:
+    # Weekly rebuild so the image keeps picking up Homebridge/Node/Alpine
+    # security updates even if nobody touches this repo.
+    - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "oci/**"
+      - ".github/workflows/build-release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release
+  cancel-in-progress: true
 
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
+  build:
+    # Native arm64 runner: no QEMU emulation, so npm's node-gyp native
+    # builds run at full speed and don't hit QEMU-related flakiness.
+    # Available free on public repos; on a private repo without arm64
+    # runner access, switch this to `ubuntu-latest` and add the QEMU
+    # steps noted in README.md.
+    runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Fetch Homebridge Version
-        id: version
-        run: |
-          HB_VERSION=$(npm show homebridge version)
-          RELEASE_TAG="v${HB_VERSION}"
-          echo "HB_VERSION=${HB_VERSION}" >> $GITHUB_ENV
-          echo "RELEASE_TAG=${RELEASE_TAG}" >> $GITHUB_ENV
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and Export Rootfs (linux/arm64)
+      - name: Build rootfs (Alpine + Node.js + Homebridge + Homebridge UI)
+        env:
+          HOMEBRIDGE_VERSION: ${{ inputs.homebridge_version || 'latest' }}
+          CONFIG_UI_VERSION: ${{ inputs.config_ui_version || 'latest' }}
         run: |
+          set -eux
           docker buildx build \
-            --platform linux/arm64 \
-            --load \
-            -t homebridge-uxc-arm64:latest .
+            --build-arg HOMEBRIDGE_VERSION="${HOMEBRIDGE_VERSION}" \
+            --build-arg CONFIG_UI_VERSION="${CONFIG_UI_VERSION}" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --output type=tar,dest="${GITHUB_WORKSPACE}/rootfs.tar" \
+            .
 
-          docker create --name temp_container homebridge-uxc-arm64:latest
-          mkdir -p bundle/rootfs
-          
-          # USE SUDO to preserve the original 0:0 container ownership
-          docker export temp_container > rootfs.tar
-          sudo tar -xf rootfs.tar -C bundle/rootfs/
-          docker rm temp_container
-          rm rootfs.tar
-
-      - name: Finalize OCI Bundle
+      - name: Assemble OCI bundle
         run: |
-          sudo cp config.json bundle/
-          
-          # Compress as root to permanently lock in the permissions
-          cd bundle && sudo tar -czf ../homebridge-arm64.tar.gz .
-          
-          # Hand ownership of the archive back to the runner for the upload step
-          sudo chown $USER:$USER ../homebridge-arm64.tar.gz
+          set -eux
+          mkdir -p bundle/rootfs
+          sudo tar --same-owner -xpf rootfs.tar -C bundle/rootfs
+          rm -f rootfs.tar
+          cp oci/config.json bundle/config.json
+          python3 -m json.tool bundle/config.json > /dev/null
 
-      - name: Publish Versioned Release
+          # Record what actually got installed, for the release notes.
+          HB_INSTALLED=$(node -e "console.log(require('./bundle/rootfs/usr/lib/node_modules/homebridge/package.json').version)")
+          UI_INSTALLED=$(node -e "console.log(require('./bundle/rootfs/usr/lib/node_modules/homebridge-config-ui-x/package.json').version)")
+          echo "HB_INSTALLED=$HB_INSTALLED" >> "$GITHUB_ENV"
+          echo "UI_INSTALLED=$UI_INSTALLED" >> "$GITHUB_ENV"
+
+          tar -czf homebridge-arm64.tar.gz -C bundle .
+
+      - name: Sanity-check the bundle
+        run: |
+          set -eux
+          tar -tzf homebridge-arm64.tar.gz | grep -qx './config.json\|config.json'
+          test -x bundle/rootfs/usr/bin/node
+          test -e bundle/rootfs/usr/lib/node_modules/homebridge/bin/homebridge.js || \
+            test -e bundle/rootfs/usr/lib/node_modules/homebridge/bin/homebridge
+          test -e bundle/rootfs/usr/lib/node_modules/homebridge-config-ui-x/dist/bin/standalone.js
+          du -sh homebridge-arm64.tar.gz
+
+      - name: Publish / update the "latest" release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
+          tag_name: latest
+          name: "Homebridge UXC bundle (arm64)"
+          make_latest: true
+          body: |
+            Automated build for OpenWrt UXC (procd) v0.3, OCI runtime-spec 1.0.2.
+
+            - Homebridge: ${{ env.HB_INSTALLED }}
+            - Homebridge UI: ${{ env.UI_INSTALLED }}
+            - Base: alpine:3.22, arm64
+            - Built: ${{ github.event.repository.updated_at }} from ${{ github.sha }}
+
+            Fetched by your OpenWrt install script from:
+            `.../releases/latest/download/homebridge-arm64.tar.gz`
+          files: homebridge-arm64.tar.gz
           name: "Homebridge ${{ env.RELEASE_TAG }}"
           files: homebridge-arm64.tar.gz
           make_latest: true
