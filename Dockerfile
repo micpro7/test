@@ -47,7 +47,12 @@ RUN apk add --no-cache \
         homebridge-config-ui-x@${CONFIG_UI_VERSION} \
     && npm cache clean --force \
     && mkdir -p /var/lib/homebridge/plugins \
-    && NPM_ROOT="$(npm root -g)" \
+    \
+    # Record npm global root so CI can reliably locate installed modules
+    && npm root -g > /etc/npm-global-root \
+    \
+    # Sanity checks (fail build early if install breaks)
+    && NPM_ROOT="$(cat /etc/npm-global-root)" \
     && node -e "console.log('homebridge', require(process.argv[1]).version)" "${NPM_ROOT}/homebridge/package.json" \
     && node -e "console.log('homebridge-config-ui-x', require(process.argv[1]).version)" "${NPM_ROOT}/homebridge-config-ui-x/package.json"
 
@@ -61,3 +66,4 @@ WORKDIR /var/lib/homebridge
 # There is no CMD/ENTRYPOINT here on purpose: the actual start command lives
 # in oci/config.json (process.args), since this filesystem is consumed as an
 # OCI runtime bundle, not run as a Docker container.
+```
