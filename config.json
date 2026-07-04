@@ -1,16 +1,20 @@
 {
   "ociVersion": "1.0.2",
   "hostname": "homebridge",
+
   "annotations": {
     "org.opencontainers.image.source": "https://github.com/micpro7/HomeBridge-UXC",
-    "io.homebridge.plugin-path": "/var/lib/homebridge/plugins",
-    "io.homebridge.storage-path": "/var/lib/homebridge"
+    "io.homebridge.storage-path": "/var/lib/homebridge",
+    "io.homebridge.plugin-path": "/var/lib/homebridge/plugins"
   },
+
   "process": {
     "terminal": false,
     "user": { "uid": 0, "gid": 0 },
+
     "args": [
-      "/usr/local/bin/hb-service",
+      "/usr/local/bin/node",
+      "/usr/local/lib/node_modules/homebridge-config-ui-x/dist/bin/hb-service.js",
       "run",
       "--allow-root",
       "-U",
@@ -18,8 +22,9 @@
       "-P",
       "/var/lib/homebridge/plugins"
     ],
+
     "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
       "HOME=/root",
       "TZ=UTC",
       "NODE_ENV=production",
@@ -30,13 +35,14 @@
       "npm_config_fund=false",
       "npm_config_audit=false"
     ],
+
     "cwd": "/var/lib/homebridge",
 
     "rlimits": [
       {
         "type": "RLIMIT_NOFILE",
-        "hard": 65536,
-        "soft": 65536
+        "soft": 65536,
+        "hard": 65536
       }
     ],
 
