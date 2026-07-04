@@ -16,8 +16,10 @@
       "hb-service",
       "run",
       "--allow-root",
-      "-U", "/var/lib/homebridge",
-      "-P", "/var/lib/homebridge/plugins"
+      "-U",
+      "/var/lib/homebridge",
+      "-P",
+      "/var/lib/homebridge/plugins"
     ],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -39,9 +41,7 @@
         "CAP_SETUID",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT",
-        "CAP_SYS_PTRACE",
-        "CAP_AUDIT_WRITE"
+        "CAP_SYS_CHROOT"
       ],
       "effective": [
         "CAP_CHOWN",
@@ -53,9 +53,7 @@
         "CAP_SETUID",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT",
-        "CAP_SYS_PTRACE",
-        "CAP_AUDIT_WRITE"
+        "CAP_SYS_CHROOT"
       ],
       "inheritable": [
         "CAP_CHOWN",
@@ -67,9 +65,7 @@
         "CAP_SETUID",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT",
-        "CAP_SYS_PTRACE",
-        "CAP_AUDIT_WRITE"
+        "CAP_SYS_CHROOT"
       ],
       "permitted": [
         "CAP_CHOWN",
@@ -81,17 +77,15 @@
         "CAP_SETUID",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT",
-        "CAP_SYS_PTRACE",
-        "CAP_AUDIT_WRITE"
+        "CAP_SYS_CHROOT"
       ],
       "ambient": []
     },
     "rlimits": [
       {
         "type": "RLIMIT_NOFILE",
-        "hard": 65536,
-        "soft": 65536
+        "hard": 1048576,
+        "soft": 1048576
       }
     ],
     "noNewPrivileges": true
@@ -110,58 +104,151 @@
       "destination": "/dev",
       "type": "tmpfs",
       "source": "tmpfs",
-      "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
+      "options": [
+        "nosuid",
+        "strictatime",
+        "mode=755",
+        "size=65536k"
+      ]
     },
     {
       "destination": "/dev/pts",
       "type": "devpts",
       "source": "devpts",
-      "options": ["nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620", "gid=5"]
+      "options": [
+        "nosuid",
+        "noexec",
+        "newinstance",
+        "ptmxmode=0666",
+        "mode=0620",
+        "gid=5"
+      ]
     },
     {
       "destination": "/dev/shm",
       "type": "tmpfs",
       "source": "shm",
-      "options": ["nosuid", "noexec", "nodev", "mode=1777", "size=65536k"]
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "mode=1777",
+        "size=128m"
+      ]
     },
     {
       "destination": "/dev/mqueue",
       "type": "mqueue",
       "source": "mqueue",
-      "options": ["nosuid", "noexec", "nodev"]
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev"
+      ]
     },
     {
       "destination": "/sys",
       "type": "sysfs",
       "source": "sysfs",
-      "options": ["nosuid", "noexec", "nodev", "ro"]
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "ro"
+      ]
     },
     {
       "destination": "/tmp",
       "type": "tmpfs",
       "source": "tmpfs",
-      "options": ["nosuid", "nodev", "mode=1777"]
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=1777"
+      ]
+    },
+    {
+      "destination": "/run",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=755"
+      ]
+    },
+    {
+      "destination": "/var/run",
+      "type": "none",
+      "source": "/run",
+      "options": [
+        "bind",
+        "rw"
+      ]
+    },
+    {
+      "destination": "/dev/null",
+      "type": "bind",
+      "source": "/dev/null",
+      "options": [
+        "bind",
+        "rw"
+      ]
+    },
+    {
+      "destination": "/dev/random",
+      "type": "bind",
+      "source": "/dev/random",
+      "options": [
+        "bind",
+        "rw"
+      ]
+    },
+    {
+      "destination": "/dev/urandom",
+      "type": "bind",
+      "source": "/dev/urandom",
+      "options": [
+        "bind",
+        "rw"
+      ]
     },
     {
       "destination": "/var/lib/homebridge",
       "type": "none",
       "source": "/mnt/SSD/Config/OpenWrt/UXC/HomeBridge",
-      "options": ["rbind", "rw"]
+      "options": [
+        "rbind",
+        "rw"
+      ]
     },
     {
       "destination": "/etc/resolv.conf",
       "type": "none",
       "source": "/etc/resolv.conf",
-      "options": ["rbind", "ro"]
+      "options": [
+        "rbind",
+        "ro"
+      ]
     }
   ],
   "linux": {
     "namespaces": [
-      { "type": "pid" },
-      { "type": "ipc" },
-      { "type": "uts" },
-      { "type": "mount" },
-      { "type": "cgroup" }
+      {
+        "type": "pid"
+      },
+      {
+        "type": "ipc"
+      },
+      {
+        "type": "uts"
+      },
+      {
+        "type": "mount"
+      },
+      {
+        "type": "cgroup"
+      }
     ],
     "maskedPaths": [
       "/proc/kcore",
