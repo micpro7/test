@@ -67,4 +67,3 @@ WORKDIR /var/lib/homebridge
 # There is no CMD/ENTRYPOINT here on purpose: the actual start command lives
 # in oci/config.json (process.args), since this filesystem is consumed as an
 # OCI runtime bundle, not run as a Docker container.
-```
