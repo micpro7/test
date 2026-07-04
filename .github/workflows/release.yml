@@ -4,68 +4,85 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "config.json"
+      - ".github/workflows/build-release.yml"
 
 permissions:
   contents: write
+
+concurrency:
+  group: build-release
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Build rootfs
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ==========================================================
+      # Build rootfs
+      # ==========================================================
+      - name: Build rootfs (Docker)
         run: |
           set -eux
+
           docker buildx build \
+            --build-arg HOMEBRIDGE_VERSION="latest" \
+            --build-arg CONFIG_UI_VERSION="latest" \
+            --build-arg NODE_VERSION="current-alpine" \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --output type=tar,dest=rootfs.tar \
             .
 
+      # ==========================================================
+      # Assemble OCI bundle
+      # ==========================================================
       - name: Assemble bundle
         run: |
           set -eux
 
           mkdir -p bundle/rootfs
+
           tar -xpf rootfs.tar -C bundle/rootfs
+          rm -f rootfs.tar
 
-          cp config.json bundle/config.json
-          python3 -m json.tool bundle/config.json
+          cp ./config.json bundle/config.json
 
-          test -x bundle/rootfs/usr/bin/node
-          test -x bundle/rootfs/usr/local/bin/hb-service
+          python3 -m json.tool bundle/config.json > /dev/null
 
-          NODE_VER=$(bundle/rootfs/usr/bin/node --version)
-
-          HB_VER=$(cat bundle/rootfs/usr/local/lib/node_modules/homebridge/package.json \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
-
-          UI_VER=$(cat bundle/rootfs/usr/local/lib/node_modules/homebridge-config-ui-x/package.json \
-            | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
-
-          echo "NODE=$NODE_VER" >> $GITHUB_ENV
-          echo "HB=$HB_VER" >> $GITHUB_ENV
-          echo "UI=$UI_VER" >> $GITHUB_ENV
+          test -x bundle/rootfs/usr/local/bin/node
 
           tar -czf homebridge-arm64.tar.gz -C bundle .
 
-      - name: Release
+      # ==========================================================
+      # Sanity check
+      # ==========================================================
+      - name: Sanity check bundle
+        run: |
+          set -eux
+
+          tar -tzf homebridge-arm64.tar.gz | grep -q config.json
+          tar -tzf homebridge-arm64.tar.gz | grep -q node
+
+          du -sh homebridge-arm64.tar.gz
+
+      # ==========================================================
+      # Release
+      # ==========================================================
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           make_latest: true
           files: homebridge-arm64.tar.gz
-          body: |
-            Homebridge UXC v3
-
-            Node: ${{ env.NODE }}
-            Homebridge: ${{ env.HB }}
-            UI: ${{ env.UI }}
-
-            - Official Node.js 24 LTS runtime
-            - Minimal Alpine runtime
-            - Aggressive cleanup
-            - Reduced memory overhead
