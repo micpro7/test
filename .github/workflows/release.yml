@@ -56,31 +56,24 @@ jobs:
           tar -xpf rootfs.tar -C bundle/rootfs
           rm -f rootfs.tar
 
-          cp ./config.json bundle/config.json
-          python3 -m json.tool bundle/config.json > /dev/null
+          cp config.json bundle/config.json
 
+          python3 -m json.tool bundle/config.json >/dev/null
+
+          # Basic sanity checks
           test -x bundle/rootfs/usr/bin/node
 
-          # ==============================
-          # FIX: find correct npm root
-          # ==============================
-          NPM_ROOT=$(node -p "require('child_process').execSync('npm root -g').toString().trim()")
-
-          echo "NPM_ROOT=$NPM_ROOT"
-
-          HB_VER=$(cat "$NPM_ROOT/homebridge/package.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
-          UI_VER=$(cat "$NPM_ROOT/homebridge-config-ui-x/package.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
-
-          echo "HB_INSTALLED=$HB_VER" >> "$GITHUB_ENV"
-          echo "UI_INSTALLED=$UI_VER" >> "$GITHUB_ENV"
-
+          # Create bundle
           tar -czf homebridge-arm64.tar.gz -C bundle .
 
-      - name: Sanity check
+      - name: Verify bundle
         run: |
           set -eux
+
           tar -tzf homebridge-arm64.tar.gz | grep -q config.json
-          test -x bundle/rootfs/usr/bin/node
+          tar -tzf homebridge-arm64.tar.gz | grep -q rootfs/usr/bin/node
+
+          du -sh homebridge-arm64.tar.gz
 
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -89,8 +82,8 @@ jobs:
           make_latest: true
           files: homebridge-arm64.tar.gz
           body: |
-            Homebridge UXC build
+            Homebridge UXC Bundle
 
-            - Homebridge: ${{ env.HB_INSTALLED }}
-            - UI: ${{ env.UI_INSTALLED }}
-            - Node: Alpine default
+            Automated build for OpenWrt UXC.
+
+            Base: Alpine 3.22
