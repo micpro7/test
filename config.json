@@ -1,17 +1,21 @@
 {
   "ociVersion": "1.0.2",
   "hostname": "homebridge",
+
   "annotations": {
     "org.opencontainers.image.source": "https://github.com/micpro7/HomeBridge-UXC",
     "io.homebridge.plugin-path": "/var/lib/homebridge/plugins",
     "io.homebridge.storage-path": "/var/lib/homebridge"
   },
+
   "process": {
     "terminal": false,
+
     "user": {
       "uid": 0,
       "gid": 0
     },
+
     "args": [
       "/usr/local/bin/hb-service",
       "run",
@@ -21,15 +25,25 @@
       "-P",
       "/var/lib/homebridge/plugins"
     ],
+
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "HOME=/root",
       "TERM=xterm",
       "TZ=UTC",
       "NODE_ENV=production",
-      "npm_config_update_notifier=false"
+
+      "npm_config_update_notifier=false",
+      "npm_config_fund=false",
+      "npm_config_audit=false",
+
+      "UV_THREADPOOL_SIZE=4",
+
+      "_NODE_OPTIONS=--max-old-space-size=256"
     ],
+
     "cwd": "/var/lib/homebridge",
+
     "capabilities": {
       "bounding": [
         "CAP_CHOWN",
@@ -81,6 +95,7 @@
       ],
       "ambient": []
     },
+
     "rlimits": [
       {
         "type": "RLIMIT_NOFILE",
@@ -88,18 +103,22 @@
         "soft": 1048576
       }
     ],
+
     "noNewPrivileges": true
   },
+
   "root": {
     "path": "rootfs",
     "readonly": false
   },
+
   "mounts": [
     {
       "destination": "/proc",
       "type": "proc",
       "source": "proc"
     },
+
     {
       "destination": "/dev",
       "type": "tmpfs",
@@ -111,13 +130,64 @@
         "size=65536k"
       ]
     },
+
+    {
+      "destination": "/dev/pts",
+      "type": "devpts",
+      "source": "devpts",
+      "options": [
+        "nosuid",
+        "noexec",
+        "newinstance",
+        "ptmxmode=0666",
+        "mode=0620",
+        "gid=5"
+      ]
+    },
+
+    {
+      "destination": "/dev/shm",
+      "type": "tmpfs",
+      "source": "shm",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "mode=1777",
+        "size=128m"
+      ]
+    },
+
+    {
+      "destination": "/tmp",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=1777"
+      ]
+    },
+
+    {
+      "destination": "/run",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=755"
+      ]
+    },
+
     {
       "destination": "/var/lib/homebridge",
       "type": "none",
       "source": "/mnt/SSD/Config/OpenWrt/UXC/homebridge",
-      "options": ["rbind","rw"]
+      "options": ["rbind", "rw"]
     }
   ],
+
   "linux": {
     "namespaces": [
       { "type": "pid" },
