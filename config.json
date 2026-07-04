@@ -202,26 +202,3 @@
     ]
   }
 }
-EOF      "destination": "/dev",
-      "type": "tmpfs",
-      "source": "tmpfs",
-      "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
-    },
-    {
-      "destination": "/var/lib/homebridge",
-      "type": "none",
-      "source": "/mnt/SSD/Config/OpenWrt/UXC/homebridge",
-      "options": ["rbind", "rw"]
-    }
-  ],
-
-  "linux": {
-    "namespaces": [
-      { "type": "pid" },
-      { "type": "ipc" },
-      { "type": "uts" },
-      { "type": "mount" },
-      { "type": "cgroup" }
-    ]
-  }
-}
