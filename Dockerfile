@@ -24,29 +24,28 @@ RUN apk add --no-cache \
         curl \
         ffmpeg
 
-# =====================================================
-# CRITICAL FIX: force deterministic npm global install path
-# =====================================================
+# Use a deterministic global npm location
 ENV NPM_CONFIG_PREFIX=/usr/local \
     PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 
 RUN npm config set prefix /usr/local \
-    && npm config set update-notifier false \
-    && npm config set audit false \
-    && npm config set fund false
+ && npm config set update-notifier false \
+ && npm config set audit false \
+ && npm config set fund false
 
-# Install Homebridge + UI
+# Install Homebridge and Homebridge UI globally
 RUN npm install -g --unsafe-perm \
-        homebridge@${HOMEBRIDGE_VERSION} \
-        homebridge-config-ui-x@${CONFIG_UI_VERSION}
+      homebridge@${HOMEBRIDGE_VERSION} \
+      homebridge-config-ui-x@${CONFIG_UI_VERSION} \
+ && npm cache clean --force
 
-# Validate installation (fail build early if wrong)
+# Verify installation during build
 RUN test -f /usr/local/lib/node_modules/homebridge/package.json \
  && test -f /usr/local/lib/node_modules/homebridge-config-ui-x/package.json
 
-# Show versions (for CI logs)
-RUN node -e "console.log('homebridge:', require('/usr/local/lib/node_modules/homebridge/package.json').version)" \
- && node -e "console.log('ui:', require('/usr/local/lib/node_modules/homebridge-config-ui-x/package.json').version)"
+# Print installed versions into the build log
+RUN node -e "console.log('Homebridge:', require('/usr/local/lib/node_modules/homebridge/package.json').version)" \
+ && node -e "console.log('Homebridge UI:', require('/usr/local/lib/node_modules/homebridge-config-ui-x/package.json').version)"
 
 ENV HOME=/root \
     TZ=UTC \
