@@ -10,10 +10,10 @@
 # Base: Alpine Linux (musl libc). Alpine's `nodejs` package tracks upstream
 # Node.js LTS, which satisfies Homebridge v2's Node >=22 requirement.
 #
-# Known trade-off: a small number of Homebridge plugins ship prebuilt
-# glibc binaries and will not load on musl. Plugins that compile from
-# source via node-gyp (the vast majority) work fine, which is why the
-# build toolchain below is kept in the final image, not just a build stage.
+# Key improvement in this version:
+# - We FORCE npm global prefix to a known path
+# - This removes ALL reliance on /usr/lib or /usr/local/lib detection
+# - CI no longer needs npm-global-root hacks (optional but still written for safety)
 
 ARG ALPINE_VERSION=3.22
 FROM alpine:${ALPINE_VERSION}
@@ -39,34 +39,42 @@ RUN apk add --no-cache \
         libstdc++ \
         curl \
         ffmpeg \
+    \
+    # ------------------------------------------------------------------
+    # FORCE deterministic npm global install location
+    # ------------------------------------------------------------------
+    && mkdir -p /usr/local/lib/node_modules \
+    && npm config set prefix /usr/local \
+    \
     && npm config set update-notifier false \
     && npm config set audit false \
     && npm config set fund false \
     \
-    # Install Homebridge + UI
+    # Install Homebridge + UI globally into controlled prefix
     && npm install -g --unsafe-perm \
         homebridge@${HOMEBRIDGE_VERSION} \
         homebridge-config-ui-x@${CONFIG_UI_VERSION} \
     \
-    # Clean npm cache to reduce image size
+    # Clean npm cache
     && npm cache clean --force \
     \
-    # Create persistent runtime directory expected by OCI config
+    # Runtime directories expected by Homebridge
     && mkdir -p /var/lib/homebridge/plugins \
     \
-    # 🔴 CRITICAL: record actual npm global install path for CI
-    # This avoids all hardcoded /usr/lib or /usr/local/lib assumptions
+    # Optional compatibility file for CI (safe fallback)
     && npm root -g > /etc/npm-global-root \
     \
-    # Sanity checks to fail build early if install breaks
-    && NPM_ROOT="$(cat /etc/npm-global-root)" \
-    && test -d "$NPM_ROOT" \
-    && test -f "$NPM_ROOT/homebridge/package.json" \
-    && test -f "$NPM_ROOT/homebridge-config-ui-x/package.json" \
+    # ------------------------------------------------------------------
+    # HARD VALIDATION (fail build early if layout changes)
+    # ------------------------------------------------------------------
+    && test -f /usr/local/lib/node_modules/homebridge/package.json \
+    && test -f /usr/local/lib/node_modules/homebridge-config-ui-x/package.json \
+    \
     && node -e "console.log('homebridge', require(process.argv[1]).version)" \
-         "$NPM_ROOT/homebridge/package.json" \
+         /usr/local/lib/node_modules/homebridge/package.json \
+    \
     && node -e "console.log('homebridge-ui', require(process.argv[1]).version)" \
-         "$NPM_ROOT/homebridge-config-ui-x/package.json"
+         /usr/local/lib/node_modules/homebridge-config-ui-x/package.json
 
 ENV HOME=/root \
     TZ=UTC \
