@@ -55,10 +55,6 @@ jobs:
 
       # ==========================================================
       # STEP 2: Assemble OCI bundle
-      #
-      # IMPORTANT DESIGN RULE:
-      # - We NEVER query npm/node_modules on the runner anymore
-      # - Everything must come from inside the Docker image output
       # ==========================================================
       - name: Assemble bundle
         run: |
@@ -70,46 +66,36 @@ jobs:
           tar -xpf rootfs.tar -C bundle/rootfs
           rm -f rootfs.tar
 
-          # Strip unnecessary files to reduce bundle size
+          # Strip unnecessary files
           rm -rf bundle/rootfs/usr/share/man \
                  bundle/rootfs/usr/share/doc \
                  bundle/rootfs/var/cache/apk/* \
                  bundle/rootfs/tmp/*
 
-          # Copy config (must exist in repo root)
+          # Copy config
           cp ./config.json bundle/config.json
 
-          # Validate config only (safe check)
+          # Validate config
           python3 -m json.tool bundle/config.json > /dev/null
 
-          # Validate runtime exists
-          test -x bundle/rootfs/usr/bin/node
+          # DEBUG: Verify Node location
+          find bundle/rootfs -name node
 
-          # ======================================================
-          # NOTE:
-          # We intentionally DO NOT read:
-          #   - npm root -g
-          #   - /usr/local/lib/node_modules
-          #   - require() from runner
-          #
-          # Reason:
-          # Those paths exist ONLY inside container runtime,
-          # NOT on GitHub Actions host.
-          # ======================================================
+          # Validate runtime exists at /usr/local/bin/node (Alpine/Node image path)
+          test -x bundle/rootfs/usr/local/bin/node
 
           # Create final bundle
           tar -czf homebridge-arm64.tar.gz -C bundle .
 
       # ==========================================================
-      # STEP 3: Minimal sanity check only
-      # (no dependency inspection)
+      # STEP 3: Minimal sanity check
       # ==========================================================
       - name: Sanity check bundle
         run: |
           set -eux
 
           tar -tzf homebridge-arm64.tar.gz | grep -q config.json
-          tar -tzf homebridge-arm64.tar.gz | grep -q "rootfs/usr/bin/node"
+          tar -tzf homebridge-arm64.tar.gz | grep -q "rootfs/usr/local/bin/node"
 
           echo "Bundle size:"
           du -sh homebridge-arm64.tar.gz
@@ -120,18 +106,13 @@ jobs:
       - name: Determine Release Name
         run: |
           set -eux
-          
-          # Get current date in YYYY-MM-DD format
           CURRENT_DATE=$(date +'%Y-%m-%d')
-          
-          # Extract exact Homebridge version directly from the uncompressed bundle folder
+          # Extract version from the uncompressed bundle
           if [ -f "bundle/rootfs/usr/local/lib/node_modules/homebridge/package.json" ]; then
             HB_VERSION=$(grep -m 1 '"version"' bundle/rootfs/usr/local/lib/node_modules/homebridge/package.json | awk -F'"' '{print $4}')
           else
             HB_VERSION="${{ inputs.homebridge_version || 'latest' }}"
           fi
-          
-          # Export to environment for the next step
           echo "RELEASE_NAME=Homebridge V${HB_VERSION}-${CURRENT_DATE}" >> $GITHUB_ENV
 
       - name: Publish release
@@ -145,11 +126,10 @@ jobs:
             Homebridge UXC Bundle (Stable Build)
 
             -----------------------------
-            DESIGN NOTES (IMPORTANT)
+            DESIGN NOTES
             -----------------------------
             - Homebridge is installed inside Docker image only
             - No dependency inspection is done on GitHub runner
-            - No npm/global path assumptions are used
             - Bundle is purely filesystem-based OCI export
 
             -----------------------------
