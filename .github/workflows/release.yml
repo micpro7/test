@@ -4,11 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       homebridge_version:
-        description: "homebridge npm version/tag (e.g. latest, 2.0.2)"
         default: "latest"
         required: false
       config_ui_version:
-        description: "homebridge-config-ui-x npm version/tag"
         default: "latest"
         required: false
 
@@ -34,29 +32,23 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build rootfs (Alpine + Node + Homebridge)
-        id: build
-        env:
-          HOMEBRIDGE_VERSION: ${{ inputs.homebridge_version || 'latest' }}
-          CONFIG_UI_VERSION: ${{ inputs.config_ui_version || 'latest' }}
+      - name: Build rootfs
         run: |
           set -eux
 
           docker buildx build \
-            --build-arg HOMEBRIDGE_VERSION="${HOMEBRIDGE_VERSION}" \
-            --build-arg CONFIG_UI_VERSION="${CONFIG_UI_VERSION}" \
+            --build-arg HOMEBRIDGE_VERSION="${{ inputs.homebridge_version || 'latest' }}" \
+            --build-arg CONFIG_UI_VERSION="${{ inputs.config_ui_version || 'latest' }}" \
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
-            --output type=tar,dest="${GITHUB_WORKSPACE}/rootfs.tar" \
+            --output type=tar,dest=rootfs.tar \
             .
 
-      - name: Assemble OCI bundle
+      - name: Assemble bundle
         run: |
           set -eux
 
@@ -64,49 +56,41 @@ jobs:
           tar -xpf rootfs.tar -C bundle/rootfs
           rm -f rootfs.tar
 
-          # IMPORTANT: config.json must be repo root
           cp ./config.json bundle/config.json
-
-          # Validate JSON only (no assumptions about runtime files)
           python3 -m json.tool bundle/config.json > /dev/null
 
-          # Validate runtime existence (safe checks only)
           test -x bundle/rootfs/usr/bin/node
 
-          # Find installed versions safely via file search (NOT require())
-          HB_INSTALLED=$(grep -R "homebridge" -n bundle/rootfs/usr/lib/node_modules/homebridge/package.json | head -1 >/dev/null 2>&1 || true)
-          UI_INSTALLED=$(grep -R "homebridge-config-ui-x" -n bundle/rootfs/usr/lib/node_modules/homebridge-config-ui-x/package.json | head -1 >/dev/null 2>&1 || true)
+          # ==============================
+          # FIX: find correct npm root
+          # ==============================
+          NPM_ROOT=$(node -p "require('child_process').execSync('npm root -g').toString().trim()")
 
-          # Proper version extraction (SAFE)
-          HB_VER=$(cat bundle/rootfs/usr/lib/node_modules/homebridge/package.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
-          UI_VER=$(cat bundle/rootfs/usr/lib/node_modules/homebridge-config-ui-x/package.json | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
+          echo "NPM_ROOT=$NPM_ROOT"
+
+          HB_VER=$(cat "$NPM_ROOT/homebridge/package.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
+          UI_VER=$(cat "$NPM_ROOT/homebridge-config-ui-x/package.json" | python3 -c "import json,sys; print(json.load(sys.stdin)['version'])")
 
           echo "HB_INSTALLED=$HB_VER" >> "$GITHUB_ENV"
           echo "UI_INSTALLED=$UI_VER" >> "$GITHUB_ENV"
 
           tar -czf homebridge-arm64.tar.gz -C bundle .
 
-      - name: Sanity-check bundle
+      - name: Sanity check
         run: |
           set -eux
-          tar -tzf homebridge-arm64.tar.gz | grep -q "config.json"
-          test -f bundle/config.json
-          test -d bundle/rootfs
+          tar -tzf homebridge-arm64.tar.gz | grep -q config.json
           test -x bundle/rootfs/usr/bin/node
 
-      - name: Publish / update release
+      - name: Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           make_latest: true
-          name: "Homebridge UXC bundle (arm64)"
+          files: homebridge-arm64.tar.gz
           body: |
-            Automated OpenWrt UXC bundle build.
+            Homebridge UXC build
 
             - Homebridge: ${{ env.HB_INSTALLED }}
-            - Homebridge UI: ${{ env.UI_INSTALLED }}
-            - Base: Alpine 3.22 (arm64)
-            - Node: system package (Alpine)
-
-            Source: ${{ github.sha }}
-          files: homebridge-arm64.tar.gz
+            - UI: ${{ env.UI_INSTALLED }}
+            - Node: Alpine default
