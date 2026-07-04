@@ -32,11 +32,16 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build rootfs
+      # ==========================================================
+      # STEP 1: Build container rootfs (ALL software installed here)
+      # ==========================================================
+      - name: Build rootfs (Docker)
         run: |
           set -eux
 
@@ -48,42 +53,83 @@ jobs:
             --output type=tar,dest=rootfs.tar \
             .
 
+      # ==========================================================
+      # STEP 2: Assemble OCI bundle
+      #
+      # IMPORTANT DESIGN RULE:
+      # - We NEVER query npm/node_modules on the runner anymore
+      # - Everything must come from inside the Docker image output
+      # ==========================================================
       - name: Assemble bundle
         run: |
           set -eux
 
           mkdir -p bundle/rootfs
+
+          # Extract image filesystem
           tar -xpf rootfs.tar -C bundle/rootfs
           rm -f rootfs.tar
 
-          cp config.json bundle/config.json
+          # Copy config (must exist in repo root)
+          cp ./config.json bundle/config.json
 
-          python3 -m json.tool bundle/config.json >/dev/null
+          # Validate config only (safe check)
+          python3 -m json.tool bundle/config.json > /dev/null
 
-          # Basic sanity checks
+          # Validate runtime exists
           test -x bundle/rootfs/usr/bin/node
 
-          # Create bundle
+          # ======================================================
+          # NOTE:
+          # We intentionally DO NOT read:
+          #   - npm root -g
+          #   - /usr/local/lib/node_modules
+          #   - require() from runner
+          #
+          # Reason:
+          # Those paths exist ONLY inside container runtime,
+          # NOT on GitHub Actions host.
+          # ======================================================
+
+          # Create final bundle
           tar -czf homebridge-arm64.tar.gz -C bundle .
 
-      - name: Verify bundle
+      # ==========================================================
+      # STEP 3: Minimal sanity check only
+      # (no dependency inspection)
+      # ==========================================================
+      - name: Sanity check bundle
         run: |
           set -eux
 
           tar -tzf homebridge-arm64.tar.gz | grep -q config.json
-          tar -tzf homebridge-arm64.tar.gz | grep -q rootfs/usr/bin/node
+          tar -tzf homebridge-arm64.tar.gz | grep -q "rootfs/usr/bin/node"
 
+          echo "Bundle size:"
           du -sh homebridge-arm64.tar.gz
 
-      - name: Release
+      # ==========================================================
+      # STEP 4: Release
+      # ==========================================================
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
           make_latest: true
           files: homebridge-arm64.tar.gz
           body: |
-            Homebridge UXC Bundle
+            Homebridge UXC Bundle (Stable Build)
 
-            Automated build for OpenWrt UXC.
+            -----------------------------
+            DESIGN NOTES (IMPORTANT)
+            -----------------------------
+            - Homebridge is installed inside Docker image only
+            - No dependency inspection is done on GitHub runner
+            - No npm/global path assumptions are used
+            - Bundle is purely filesystem-based OCI export
 
-            Base: Alpine 3.22
+            -----------------------------
+            BUILD INFO
+            -----------------------------
+            Base: Alpine 3.22 (arm64)
+            Build system: Docker Buildx
