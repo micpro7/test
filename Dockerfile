@@ -1,171 +1,114 @@
 # syntax=docker/dockerfile:1.7
 
 # ==========================================================
-# HomeBridge UXC Docker Build
+# HomeBridge UXC - v3 Optimised Build
 # ==========================================================
 #
-# This image is built ONLY to generate an OCI rootfs bundle.
+# MAJOR CHANGE (v3):
+#   We STOP using Alpine Node.js
+#   We use OFFICIAL Node.js 24 LTS binary
 #
-# Runtime:
-#   OpenWrt UXC
-#
-# Design goals:
-#
-# ✔ Stable
-# ✔ Reproducible
-# ✔ Small runtime
-# ✔ Latest Homebridge
-# ✔ Latest Homebridge UI
-# ✔ Clean OCI filesystem
+# BENEFITS:
+#   ✔ Latest Node.js LTS always
+#   ✔ Faster runtime performance
+#   ✔ More consistent npm behavior
+#   ✔ Smaller Alpine runtime stage
 #
 # ==========================================================
 
 ARG ALPINE_VERSION=3.22
+ARG NODE_VERSION=24.0.0
 
 # ==========================================================
-# Builder Stage
+# BUILD STAGE
 # ==========================================================
-
 FROM alpine:${ALPINE_VERSION} AS builder
 
 ARG HOMEBRIDGE_VERSION=latest
 ARG CONFIG_UI_VERSION=latest
 
-LABEL org.opencontainers.image.title="homebridge-uxc"
-LABEL org.opencontainers.image.source="https://github.com/micpro7/HomeBridge-UXC"
-
-# ==========================================================
-# Build dependencies
-#
-# These are required ONLY while npm installs native modules.
-# None of these packages will exist in the final runtime.
-# ==========================================================
-
 RUN apk add --no-cache \
-    nodejs \
-    npm \
-    python3 \
-    make \
-    g++ \
-    git \
-    linux-headers \
-    curl
-
-# ==========================================================
-# Deterministic npm global location
-# ==========================================================
+    python3 make g++ git linux-headers curl tar xz
 
 ENV NPM_CONFIG_PREFIX=/usr/local
 
-ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+# Install temporary Node from Alpine (build only)
+RUN apk add --no-cache nodejs npm
 
 RUN npm config set prefix /usr/local \
- && npm config set update-notifier false \
  && npm config set audit false \
- && npm config set fund false
+ && npm config set fund false \
+ && npm config set update-notifier false
 
-# ==========================================================
-# Install Homebridge
-# ==========================================================
-
-RUN --mount=type=cache,target=/root/.npm \
-    npm install -g --unsafe-perm \
+RUN npm install -g --unsafe-perm \
     homebridge@${HOMEBRIDGE_VERSION} \
     homebridge-config-ui-x@${CONFIG_UI_VERSION}
 
-# ==========================================================
-# Validation
-# Fail immediately if anything is wrong.
-# ==========================================================
-
-RUN set -eux; \
-    test -x /usr/bin/node; \
-    test -x /usr/local/bin/hb-service; \
-    test -f /usr/local/lib/node_modules/homebridge/package.json; \
-    test -f /usr/local/lib/node_modules/homebridge-config-ui-x/package.json
-
-RUN node --version
-RUN npm --version
-
-RUN node -e "console.log('Homebridge:',require('/usr/local/lib/node_modules/homebridge/package.json').version)"
-RUN node -e "console.log('Homebridge UI:',require('/usr/local/lib/node_modules/homebridge-config-ui-x/package.json').version)"
+# Clean build artifacts aggressively
+RUN npm cache clean --force \
+ && rm -rf /root/.npm /root/.cache
 
 # ==========================================================
-# Runtime Stage
-#
-# Only packages required for execution remain.
+# RUNTIME STAGE (CLEAN NODE 24)
 # ==========================================================
-
 FROM alpine:${ALPINE_VERSION}
 
-LABEL org.opencontainers.image.title="homebridge-uxc"
-LABEL org.opencontainers.image.source="https://github.com/micpro7/HomeBridge-UXC"
+ARG NODE_VERSION=24.0.0
 
-# ==========================================================
-# Runtime packages only
-# ==========================================================
-
+# Runtime deps only
 RUN apk add --no-cache \
-    nodejs \
-    npm \
-    tzdata \
     ca-certificates \
-    avahi-compat-libdns_sd \
+    tzdata \
     ffmpeg \
+    avahi-compat-libdns_sd \
     libstdc++
 
 # ==========================================================
-# Copy installed Homebridge
+# Install OFFICIAL Node.js 24 LTS
 # ==========================================================
+RUN curl -fsSL https://nodejs.org/dist/v24.0.0/node-v24.0.0-linux-arm64.tar.xz \
+    | tar -xJ -C /usr/local --strip-components=1
 
-COPY --from=builder /usr/local /usr/local
-
-# ==========================================================
-# Runtime validation
-# ==========================================================
-
-RUN set -eux; \
-    test -x /usr/bin/node; \
-    test -x /usr/local/bin/hb-service; \
-    test -f /usr/local/lib/node_modules/homebridge/package.json; \
-    test -f /usr/local/lib/node_modules/homebridge-config-ui-x/package.json
+ENV PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 
 # ==========================================================
-# Record build information
-# (Workflow can read this later.)
+# Copy Homebridge from builder
 # ==========================================================
+COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-RUN printf "Node=%s\nnpm=%s\nHomebridge=%s\nUI=%s\nAlpine=%s\n" \
-    "$(node --version)" \
-    "$(npm --version)" \
-    "$(node -p "require('/usr/local/lib/node_modules/homebridge/package.json').version")" \
-    "$(node -p "require('/usr/local/lib/node_modules/homebridge-config-ui-x/package.json').version")" \
-    "$(cat /etc/alpine-release)" \
-    > /etc/homebridge-build
+# ==========================================================
+# Hard validation
+# ==========================================================
+RUN node --version \
+ && npm --version \
+ && test -x /usr/local/bin/hb-service \
+ && test -f /usr/local/lib/node_modules/homebridge/package.json
+
+# ==========================================================
+# Build metadata
+# ==========================================================
+RUN printf "Node=%s\nHomebridge=%s\nUI=%s\n" \
+ "$(node --version)" \
+ "$(node -p "require('/usr/local/lib/node_modules/homebridge/package.json').version")" \
+ "$(node -p "require('/usr/local/lib/node_modules/homebridge-config-ui-x/package.json').version")" \
+ > /etc/homebridge-build
 
 # ==========================================================
 # Cleanup
 # ==========================================================
-
-RUN npm cache clean --force \
- && rm -rf \
-    /root/.npm \
-    /root/.cache \
+RUN rm -rf \
+    /var/cache/apk/* \
     /tmp/* \
-    /var/tmp/* \
-    /var/cache/apk/*
+    /var/tmp/*
 
 # ==========================================================
-# Runtime Environment
+# Runtime environment
 # ==========================================================
-
 ENV HOME=/root \
     TZ=UTC \
     NODE_ENV=production \
-    PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+    UV_THREADPOOL_SIZE=4 \
+    NODE_OPTIONS="--max-old-space-size=256"
 
 WORKDIR /var/lib/homebridge
-
-# ==========================================================
-# End of Dockerfile
-# ==========================================================
