@@ -42,20 +42,31 @@ RUN apk add --no-cache \
     && npm config set update-notifier false \
     && npm config set audit false \
     && npm config set fund false \
+    \
+    # Install Homebridge + UI
     && npm install -g --unsafe-perm \
         homebridge@${HOMEBRIDGE_VERSION} \
         homebridge-config-ui-x@${CONFIG_UI_VERSION} \
+    \
+    # Clean npm cache to reduce image size
     && npm cache clean --force \
+    \
+    # Create persistent runtime directory expected by OCI config
     && mkdir -p /var/lib/homebridge/plugins \
     \
-    # Record npm global root for deterministic lookup in CI
+    # 🔴 CRITICAL: record actual npm global install path for CI
+    # This avoids all hardcoded /usr/lib or /usr/local/lib assumptions
     && npm root -g > /etc/npm-global-root \
     \
-    # Sanity checks (fail fast if install breaks)
+    # Sanity checks to fail build early if install breaks
     && NPM_ROOT="$(cat /etc/npm-global-root)" \
     && test -d "$NPM_ROOT" \
-    && node -e "console.log('homebridge', require(process.argv[1]).version)" "${NPM_ROOT}/homebridge/package.json" \
-    && node -e "console.log('homebridge-config-ui-x', require(process.argv[1]).version)" "${NPM_ROOT}/homebridge-config-ui-x/package.json"
+    && test -f "$NPM_ROOT/homebridge/package.json" \
+    && test -f "$NPM_ROOT/homebridge-config-ui-x/package.json" \
+    && node -e "console.log('homebridge', require(process.argv[1]).version)" \
+         "$NPM_ROOT/homebridge/package.json" \
+    && node -e "console.log('homebridge-ui', require(process.argv[1]).version)" \
+         "$NPM_ROOT/homebridge-config-ui-x/package.json"
 
 ENV HOME=/root \
     TZ=UTC \
