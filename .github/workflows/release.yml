@@ -72,7 +72,7 @@ jobs:
           mkdir -p bundle/rootfs
           sudo tar --same-owner -xpf rootfs.tar -C bundle/rootfs
           rm -f rootfs.tar
-          cp oci/config.json bundle/config.json
+          cp config.json bundle/config.json
           python3 -m json.tool bundle/config.json > /dev/null
 
           # Record what actually got installed, for the release notes.
