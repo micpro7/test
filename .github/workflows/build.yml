@@ -4,20 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       homebridge_version:
-        description: Homebridge version
-        default: "latest"
+        description: "Homebridge version"
         required: false
+        default: "latest"
 
       config_ui_version:
-        description: Config UI X version
-        default: "latest"
+        description: "Config UI version"
         required: false
+        default: "latest"
 
   schedule:
     - cron: "0 6 * * 1"
 
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "Dockerfile"
       - "init"
@@ -34,7 +35,6 @@ concurrency:
   cancel-in-progress: true
 
 
-
 jobs:
 
   build:
@@ -44,12 +44,11 @@ jobs:
 
     steps:
 
-
       # ==========================================================
       # CHECKOUT
       # ==========================================================
 
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v5
 
 
@@ -58,19 +57,16 @@ jobs:
       # BUILDX
       # ==========================================================
 
-      - name: Setup Buildx
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
 
 
 
-
-
       # ==========================================================
-      # STEP 1:
-      # Build ARM64 filesystem rootfs
+      # BUILD HOMEbridge IMAGE
       # ==========================================================
 
-      - name: Build rootfs (Docker)
+      - name: Build Homebridge filesystem
         run: |
 
           set -eux
@@ -82,52 +78,49 @@ jobs:
             --cache-from type=gha \
             --cache-to type=gha,mode=max \
             --tag homebridge-build:local \
-            --output type=tar,dest=rootfs.tar \
+            --load \
             .
 
 
 
-
-
       # ==========================================================
-      # STEP 2:
-      # Assemble UXC OCI bundle
+      # EXPORT ROOTFS
       # ==========================================================
 
-      - name: Assemble bundle
+      - name: Export container rootfs
         run: |
 
           set -eux
 
 
+          CID=$(docker create homebridge-build:local)
+
+
           mkdir -p bundle/rootfs
 
 
+          docker export "$CID" -o rootfs.tar
 
-          echo "Extracting filesystem..."
+
+          docker rm "$CID"
+
 
           sudo tar -xpf rootfs.tar -C bundle/rootfs
+
 
           rm -f rootfs.tar
 
 
 
+      # ==========================================================
+      # CLEAN ROOTFS
+      # ==========================================================
 
+      - name: Minimize root filesystem
+        run: |
 
-          echo "Creating Homebridge persistent mount structure..."
+          set -eux
 
-          sudo mkdir -p \
-            bundle/rootfs/homebridge/accessories \
-            bundle/rootfs/homebridge/backups \
-            bundle/rootfs/homebridge/logs \
-            bundle/rootfs/homebridge/persist \
-            bundle/rootfs/homebridge/node_modules
-
-
-
-
-
-          echo "Removing unnecessary files..."
 
           sudo rm -rf \
             bundle/rootfs/usr/share/man \
@@ -137,123 +130,90 @@ jobs:
 
 
 
+      # ==========================================================
+      # CREATE UXC OCI BUNDLE
+      # ==========================================================
+
+      - name: Assemble UXC bundle
+        run: |
+
+          set -eux
 
 
-          echo "Copying UXC runtime configuration..."
-
-          cp ./config.json bundle/config.json
+          cp config.json bundle/config.json
 
 
-
-
-
-          echo "Validating JSON..."
-
-          python3 -m json.tool bundle/config.json > /dev/null
-
-
-
-
-
-          echo "Validating runtime files..."
-
-          sudo test -x bundle/rootfs/usr/local/bin/node
-
-          sudo test -x bundle/rootfs/init
+          python3 -m json.tool \
+            bundle/config.json \
+            > /dev/null
 
 
 
+          sudo test -x \
+            bundle/rootfs/usr/local/bin/node
 
 
-          echo "Runtime validation complete"
-
-
-
-
-
-          echo "Creating final archive..."
 
           cd bundle
 
-          sudo tar -czf ../homebridge-arm64.tar.gz \
-              config.json \
-              rootfs
+
+          sudo tar \
+            -czf ../homebridge-arm64.tar.gz \
+            config.json \
+            rootfs
+
 
           cd ..
 
 
-
           sudo chown \
-            $(id -u):$(id -g) \
+            "$(id -u):$(id -g)" \
             homebridge-arm64.tar.gz
 
 
 
-
-
       # ==========================================================
-      # STEP 3:
-      # Bundle sanity check
+      # VERIFY PACKAGE
       # ==========================================================
 
-      - name: Sanity check bundle
+      - name: Validate bundle
         run: |
 
           set -eux
 
 
-          tar -tzf homebridge-arm64.tar.gz \
-              | grep -q config.json
+          tar -tzf homebridge-arm64.tar.gz | grep config.json
 
 
-          tar -tzf homebridge-arm64.tar.gz \
-              | grep -q "rootfs/usr/local/bin/node"
-
-
-          tar -tzf homebridge-arm64.tar.gz \
-              | grep -q "rootfs/init"
-
-
-          tar -tzf homebridge-arm64.tar.gz \
-              | grep -q "rootfs/homebridge"
+          tar -tzf homebridge-arm64.tar.gz | grep \
+            "rootfs/usr/local/bin/node"
 
 
           echo "Bundle size:"
-
           du -sh homebridge-arm64.tar.gz
 
 
 
-
-
       # ==========================================================
-      # STEP 4:
-      # Extract release metadata
+      # EXTRACT BUILD INFORMATION
       # ==========================================================
 
-      - name: Determine Release Name and Details
+      - name: Collect build information
         run: |
 
           set -eux
 
 
-          CURRENT_DATE=$(date +'%Y-%m-%d')
+          DATE=$(date +"%Y-%m-%d")
 
 
 
-          if [ -f "bundle/rootfs/usr/local/lib/node_modules/homebridge/package.json" ]; then
-
-            HB_VERSION=$(grep -m 1 '"version"' \
-            bundle/rootfs/usr/local/lib/node_modules/homebridge/package.json \
-            | awk -F'"' '{print $4}')
-
-          else
-
-            HB_VERSION="${{ inputs.homebridge_version || 'latest' }}"
-
-          fi
-
-
+          HB_VERSION=$(docker run \
+            --rm \
+            homebridge-build:local \
+            sh -c \
+            "node -p \"require('/usr/local/lib/node_modules/homebridge/package.json').version\"" \
+          )
 
 
 
@@ -261,11 +221,7 @@ jobs:
             --rm \
             --entrypoint node \
             homebridge-build:local \
-            --version \
-            | tr -d 'v' \
-            | tr -d '\r')
-
-
+            --version | tr -d 'v')
 
 
 
@@ -273,86 +229,72 @@ jobs:
             --rm \
             --entrypoint npm \
             homebridge-build:local \
-            --version \
-            | tr -d '\r')
+            --version)
 
 
 
-
-
-          BUNDLE_SIZE=$(du -sh homebridge-arm64.tar.gz | cut -f1)
-
+          SIZE=$(du -sh homebridge-arm64.tar.gz | cut -f1)
 
 
 
+          echo "HB_VERSION=$HB_VERSION" >> $GITHUB_ENV
 
-          echo "RELEASE_NAME=Homebridge V${HB_VERSION}-${CURRENT_DATE}" >> $GITHUB_ENV
+          echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
 
-          echo "HB_VERSION=${HB_VERSION}" >> $GITHUB_ENV
+          echo "NPM_VERSION=$NPM_VERSION" >> $GITHUB_ENV
 
-          echo "NODE_VERSION=${NODE_VERSION}" >> $GITHUB_ENV
+          echo "SIZE=$SIZE" >> $GITHUB_ENV
 
-          echo "NPM_VERSION=${NPM_VERSION}" >> $GITHUB_ENV
-
-          echo "BUNDLE_SIZE=${BUNDLE_SIZE}" >> $GITHUB_ENV
-
+          echo "RELEASE_NAME=Homebridge v${HB_VERSION}-${DATE}" >> $GITHUB_ENV
 
 
 
 
       # ==========================================================
-      # STEP 5:
-      # Publish release
+      # RELEASE
       # ==========================================================
 
-      - name: Publish release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
 
         with:
 
-          name: ${{ env.RELEASE_NAME }}
-
           tag_name: latest
+
+          name: ${{ env.RELEASE_NAME }}
 
           make_latest: true
 
-          files: |
+
+          files:
             homebridge-arm64.tar.gz
 
 
           body: |
 
-            ### 📦 Release Asset Details
-
-            * **Release Version:** `Homebridge v${{ env.HB_VERSION }}`
-            * **Compiled Asset Size:** `${{ env.BUNDLE_SIZE }}`
-            * **Target Architecture:** `ARM64 (aarch64)`
-            * **Base Environment:** `Alpine 3.22`
-            * **Node.js:** `v${{ env.NODE_VERSION }}`
-            * **NPM:** `${{ env.NPM_VERSION }}`
+            ## Homebridge UXC ARM64 Bundle
 
 
-            ---
+            ### Build Information
+
+            - Homebridge: `${{ env.HB_VERSION }}`
+            - Node.js: `${{ env.NODE_VERSION }}`
+            - NPM: `${{ env.NPM_VERSION }}`
+            - Size: `${{ env.SIZE }}`
+            - Architecture: ARM64
 
 
-            ### ⚙️ Design Notes
+            ### Environment
 
-            - Homebridge filesystem built using Alpine 3.22
-            - Node.js 24 ARM64 runtime
-            - Homebridge Config UI X included
-            - UXC compatible OCI filesystem bundle
-            - Persistent Homebridge data stored through `/homebridge`
-            - Homebridge runs using dedicated user isolation
-            - Host OpenWrt Avahi remains responsible for mDNS discovery
-            - Optimised for OpenWrt routers with limited RAM
+            - Alpine Linux 3.22
+            - Node.js 24
+            - Root execution UID 0
+            - Designed for OpenWrt UXC containers
 
 
-            ---
+            ### Runtime
 
-
-            ### 🛠️ Build Information
-
-            - **Build Runner:** Native ARM64 Ubuntu
-            - **Build System:** Docker Buildx
-            - **Export Type:** Filesystem OCI bundle
-            - **Runtime:** OpenWrt UXC
+            - Persistent data should be mounted externally
+            - Homebridge UI included
+            - Native ARM64 build
+            - Optimised for low RAM routers
