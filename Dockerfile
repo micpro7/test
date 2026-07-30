@@ -1,73 +1,93 @@
+```dockerfile
 # syntax=docker/dockerfile:1
 
-# Using node:24-alpine guarantees Node.js 24 while pulling the latest compatible Alpine Linux base
-FROM node:24-alpine
+###############################################################################
+# Homebridge UXC Builder
+#
+# Based on the official Homebridge Docker image but adapted for OpenWrt UXC.
+#
+# Target:
+#   - ARM64
+#   - Alpine 3.22
+#   - Node.js 24
+#   - Homebridge latest
+#   - Homebridge Config UI X latest
+###############################################################################
+
+FROM node:24-alpine3.22
 
 ARG HOMEBRIDGE_VERSION=latest
 ARG CONFIG_UI_VERSION=latest
 
-LABEL org.opencontainers.image.title="homebridge-uxc" \
-      org.opencontainers.image.source="https://github.com/micpro7/HomeBridge-UXC"
+LABEL org.opencontainers.image.title="Homebridge UXC"
+LABEL org.opencontainers.image.description="Homebridge container for OpenWrt UXC"
+LABEL org.opencontainers.image.source="https://github.com/homebridge/docker-homebridge"
 
-# ==========================================================
-# System dependencies
-# (nodejs and npm are inherently provided by the base image)
-# 
-# Notes on compilation tools:
-# - git: Required by npm to install beta plugins or dependencies hosted directly on GitHub URLs.
-# - linux-headers: Required by node-gyp to compile native C/C++ plugins that need kernel/hardware access (e.g., Bluetooth BLE, raw network sockets).
-# - python3, make, g++: Standard node-gyp requirements for compiling native modules.
-# ==========================================================
-RUN apk update && apk upgrade \
- && apk add --no-cache \
+###############################################################################
+# Environment
+###############################################################################
+
+ENV HOMEBRIDGE_DIR=/homebridge \
+    HOMEBRIDGE_CONFIG_UI=1 \
+    HOMEBRIDGE_INSECURE=1 \
+    UIX_CONFIG_PATH=/homebridge \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_CACHE=/tmp/.npm
+
+###############################################################################
+# Packages
+###############################################################################
+
+RUN apk add --no-cache \
+    bash \
+    tini \
+    su-exec \
+    curl \
+    jq \
+    git \
     tzdata \
     ca-certificates \
-    avahi-compat-libdns_sd \
-    libstdc++ \
-    curl \
-    ffmpeg \
-    python3 \
-    make \
-    g++ \
-    git \
-    linux-headers
+    avahi \
+    avahi-tools
 
-# ==========================================================
-# CRITICAL FIX:
-# Ensure deterministic npm global install location
-# (prevents “missing package.json” / wrong prefix issues)
-# ==========================================================
-ENV NPM_CONFIG_PREFIX=/usr/local \
-    PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+###############################################################################
+# Homebridge User
+###############################################################################
 
-RUN npm config set prefix /usr/local \
- && npm config set update-notifier false \
- && npm config set audit false \
- && npm config set fund false
+RUN addgroup -S homebridge && \
+    adduser -S \
+        -h /homebridge \
+        -G homebridge \
+        homebridge
 
-# ==========================================================
-# Install Homebridge stack
-# ==========================================================
-RUN npm install -g --unsafe-perm \
-    homebridge@${HOMEBRIDGE_VERSION} \
-    homebridge-config-ui-x@${CONFIG_UI_VERSION} \
- && npm cache clean --force
+###############################################################################
+# Install Homebridge
+###############################################################################
 
-# ==========================================================
-# HARD VALIDATION (fail fast if install breaks)
-# ==========================================================
-RUN set -eux; \
-    test -f /usr/local/lib/node_modules/homebridge/package.json; \
-    test -f /usr/local/lib/node_modules/homebridge-config-ui-x/package.json; \
-    node -e "console.log('Node.js Version:', process.version)"; \
-    node -e "console.log('Homebridge OK:', require('/usr/local/lib/node_modules/homebridge/package.json').version)"; \
-    node -e "console.log('UI OK:', require('/usr/local/lib/node_modules/homebridge-config-ui-x/package.json').version)"
+RUN npm install -g \
+        homebridge@${HOMEBRIDGE_VERSION} \
+        homebridge-config-ui-x@${CONFIG_UI_VERSION} \
+    && npm cache clean --force
 
-# ==========================================================
-# Runtime environment
-# ==========================================================
-ENV HOME=/root \
-    TZ=UTC \
-    NODE_ENV=production
+###############################################################################
+# Directories
+###############################################################################
 
-WORKDIR /var/lib/homebridge
+RUN mkdir -p \
+    /homebridge \
+    /homebridge/accessories \
+    /homebridge/backups \
+    /homebridge/logs \
+    /homebridge/node_modules \
+    /homebridge/persist \
+    /usr/local/etc
+
+COPY init /init
+
+RUN chmod +x /init && \
+    chown -R homebridge:homebridge /homebridge
+
+ENTRYPOINT ["/sbin/tini","--","/init"]
+```
