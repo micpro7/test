@@ -76,6 +76,170 @@ jobs:
             --cache-to type=gha,mode=max \
             --tag homebridge-build:local \
             --load \
+            .
+
+
+
+      # --------------------------------------------------
+      # Export UXC Bundle
+      # --------------------------------------------------
+
+      - name: Create UXC bundle
+
+        run: |
+
+          set -eux
+
+
+          mkdir -p output/rootfs
+
+
+          CONTAINER=$(docker create homebridge-build:local)
+
+
+          docker export "$CONTAINER" \
+            | tar -x -C output/rootfs
+
+
+          docker rm "$CONTAINER"
+
+
+
+          mkdir -p output
+
+
+          cp config.json output/config.json
+
+
+
+          tar \
+            -czpf homebridge-arm64.tar.gz \
+            -C output \
+            config.json \
+            rootfs
+
+
+
+      # --------------------------------------------------
+      # Validate bundle
+      # --------------------------------------------------
+
+      - name: Validate bundle
+
+        run: |
+
+          set -eux
+
+
+          test -f homebridge-arm64.tar.gz
+
+          test -f output/config.json
+
+          test -d output/rootfs
+
+
+          jq empty output/config.json
+
+
+
+      # --------------------------------------------------
+      # Extract metadata
+      # --------------------------------------------------
+
+      - name: Extract versions
+
+        run: |
+
+          set -eux
+
+
+          DATE=$(date +"%Y-%m-%d")
+
+
+          HB_VERSION=$(node -p \
+          "require('./output/rootfs/usr/local/lib/node_modules/homebridge/package.json').version")
+
+
+          NODE_VERSION=$(node --version | tr -d 'v')
+
+
+          SIZE=$(du -sh homebridge-arm64.tar.gz | cut -f1)
+
+
+
+          echo "HB_VERSION=$HB_VERSION" >> $GITHUB_ENV
+
+          echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
+
+          echo "SIZE=$SIZE" >> $GITHUB_ENV
+
+          echo "RELEASE_NAME=Homebridge v${HB_VERSION}-${DATE}" >> $GITHUB_ENV
+
+
+
+      # --------------------------------------------------
+      # Upload artifact
+      # --------------------------------------------------
+
+      - name: Upload bundle artifact
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: homebridge-arm64-bundle
+
+          path: homebridge-arm64.tar.gz
+
+
+
+      # --------------------------------------------------
+      # Create release
+      # --------------------------------------------------
+
+      - name: Create GitHub Release
+
+        uses: softprops/action-gh-release@v2
+
+        with:
+
+          tag_name: "homebridge-${{ env.HB_VERSION }}"
+
+          name: "${{ env.RELEASE_NAME }}"
+
+          body: |
+
+            ## Homebridge UXC ARM64 Bundle
+
+
+            **Homebridge:** ${{ env.HB_VERSION }}
+
+            **Node.js:** ${{ env.NODE_VERSION }}
+
+            **Bundle Size:** ${{ env.SIZE }}
+
+
+            Built automatically for OpenWrt UXC.
+
+
+          files:
+
+            - homebridge-arm64.tar.gz
+      - name: Build Homebridge image
+
+        run: |
+
+          set -eux
+
+
+          docker buildx build \
+            --platform linux/arm64 \
+            --build-arg HOMEBRIDGE_VERSION="${{ github.event.inputs.homebridge_version || 'latest' }}" \
+            --build-arg CONFIG_UI_VERSION="${{ github.event.inputs.config_ui_version || 'latest' }}" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --tag homebridge-build:local \
+            --load \
 
 
 
