@@ -1,35 +1,30 @@
 {
   "ociVersion": "1.0.2",
   "hostname": "homebridge",
-  "annotations": {
-    "org.opencontainers.image.source": "https://github.com/micpro7/HomeBridge-UXC",
-    "io.homebridge.plugin-path": "/var/lib/homebridge/plugins",
-    "io.homebridge.storage-path": "/var/lib/homebridge"
-  },
+
   "process": {
-    "terminal": false,
+    "terminal": true,
+    "cwd": "/homebridge",
+
+    "args": [
+      "/init"
+    ],
+
+    "env": [
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "HOME=/root",
+      "TERM=xterm-256color",
+      "NODE_ENV=production",
+      "NODE_OPTIONS=--max-old-space-size=128",
+      "HOMEBRIDGE_CONFIG_UI=1",
+      "HOMEBRIDGE_CONFIG_PATH=/homebridge/config.json"
+    ],
+
     "user": {
       "uid": 0,
       "gid": 0
     },
-    "args": [
-      "/bin/sh",
-      "-c",
-      "while true; do /usr/local/bin/hb-service run --allow-root -U /var/lib/homebridge -P /var/lib/homebridge/plugins; echo 'Homebridge crashed - restarting in 3s'; sleep 3; done"
-    ],
-    "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "HOME=/root",
-      "TERM=xterm",
-      "TZ=UTC",
-      "NODE_ENV=production",
-      "npm_config_update_notifier=false",
-      "NODE_OPTIONS=--max-old-space-size=256",
-      "UV_THREADPOOL_SIZE=4",
-      "MDNS_INTERFACE=br-lan",
-      "HOMEBRIDGE_IP=0.0.0.0"
-    ],
-    "cwd": "/var/lib/homebridge",
+
     "capabilities": {
       "bounding": [
         "CAP_CHOWN",
@@ -39,10 +34,15 @@
         "CAP_KILL",
         "CAP_SETGID",
         "CAP_SETUID",
+        "CAP_SETPCAP",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT"
+        "CAP_SYS_CHROOT",
+        "CAP_MKNOD",
+        "CAP_AUDIT_WRITE",
+        "CAP_SETFCAP"
       ],
+
       "effective": [
         "CAP_CHOWN",
         "CAP_DAC_OVERRIDE",
@@ -51,22 +51,15 @@
         "CAP_KILL",
         "CAP_SETGID",
         "CAP_SETUID",
+        "CAP_SETPCAP",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT"
+        "CAP_SYS_CHROOT",
+        "CAP_MKNOD",
+        "CAP_AUDIT_WRITE",
+        "CAP_SETFCAP"
       ],
-      "inheritable": [
-        "CAP_CHOWN",
-        "CAP_DAC_OVERRIDE",
-        "CAP_FOWNER",
-        "CAP_FSETID",
-        "CAP_KILL",
-        "CAP_SETGID",
-        "CAP_SETUID",
-        "CAP_NET_BIND_SERVICE",
-        "CAP_NET_RAW",
-        "CAP_SYS_CHROOT"
-      ],
+
       "permitted": [
         "CAP_CHOWN",
         "CAP_DAC_OVERRIDE",
@@ -75,25 +68,30 @@
         "CAP_KILL",
         "CAP_SETGID",
         "CAP_SETUID",
+        "CAP_SETPCAP",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
-        "CAP_SYS_CHROOT"
-      ],
-      "ambient": []
+        "CAP_SYS_CHROOT",
+        "CAP_MKNOD",
+        "CAP_AUDIT_WRITE",
+        "CAP_SETFCAP"
+      ]
     },
+
     "rlimits": [
       {
         "type": "RLIMIT_NOFILE",
-        "hard": 65536,
-        "soft": 65536
+        "hard": 65535,
+        "soft": 65535
       }
-    ],
-    "noNewPrivileges": true
+    ]
   },
+
   "root": {
     "path": "rootfs",
-    "readonly": true
+    "readonly": false
   },
+
   "mounts": [
     {
       "destination": "/proc",
@@ -120,8 +118,7 @@
         "noexec",
         "newinstance",
         "ptmxmode=0666",
-        "mode=0620",
-        "gid=5"
+        "mode=0620"
       ]
     },
     {
@@ -130,10 +127,20 @@
       "source": "shm",
       "options": [
         "nosuid",
-        "noexec",
         "nodev",
         "mode=1777",
-        "size=128m"
+        "size=67108864"
+      ]
+    },
+    {
+      "destination": "/sys",
+      "type": "sysfs",
+      "source": "sysfs",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "ro"
       ]
     },
     {
@@ -141,57 +148,39 @@
       "type": "tmpfs",
       "source": "tmpfs",
       "options": [
-        "nosuid",
-        "nodev",
-        "mode=1777"
-      ]
-    },
-    {
-      "destination": "/run",
-      "type": "tmpfs",
-      "source": "tmpfs",
-      "options": [
-        "nosuid",
-        "nodev",
-        "mode=755"
-      ]
-    },
-    {
-      "destination": "/var/lib/homebridge",
-      "type": "none",
-      "source": "/mnt/SSD/Config/OpenWrt/UXC/homebridge",
-      "options": [
-        "rbind",
-        "rw"
-      ]
-    },
-    {
-      "destination": "/etc/resolv.conf",
-      "type": "none",
-      "source": "/etc/resolv.conf",
-      "options": [
-        "rbind",
-        "ro"
+        "mode=1777",
+        "size=134217728"
       ]
     }
   ],
+
   "linux": {
     "namespaces": [
-      { "type": "pid" },
-      { "type": "ipc" },
-      { "type": "uts" },
-      { "type": "mount" },
-      { "type": "cgroup" }
+      {
+        "type": "pid"
+      },
+      {
+        "type": "ipc"
+      },
+      {
+        "type": "uts"
+      },
+      {
+        "type": "mount"
+      },
+      {
+        "type": "network"
+      }
     ],
+
     "maskedPaths": [
       "/proc/kcore",
-      "/proc/keys",
       "/proc/latency_stats",
       "/proc/timer_list",
-      "/proc/timer_stats",
       "/proc/sched_debug",
-      "/sys/firmware"
+      "/proc/scsi"
     ],
+
     "readonlyPaths": [
       "/proc/asound",
       "/proc/bus",
