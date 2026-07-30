@@ -1,46 +1,41 @@
 {
   "ociVersion": "1.0.2",
-
   "hostname": "homebridge",
-
   "process": {
     "terminal": true,
-
     "cwd": "/homebridge",
-
     "args": [
       "/init"
     ],
-
     "env": [
       "HOME=/root",
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "TERM=xterm-256color",
       "NODE_ENV=production",
-      "NODE_OPTIONS=--max-old-space-size=128",
+      "NODE_OPTIONS=--max-old-space-size=256",
       "HOMEBRIDGE_CONFIG_UI=1",
-      "HOMEBRIDGE_CONFIG_PATH=/homebridge/config.json"
+      "HOMEBRIDGE_CONFIG_PATH=/homebridge/config.json",
+      "HOMEBRIDGE_CONFIG_UI_HOST=0.0.0.0",
+      "HOMEBRIDGE_CONFIG_UI_PORT=8581",
+      "HOMEBRIDGE_CONFIG_UI_TERMINAL=1"
     ],
-
     "user": {
       "uid": 0,
       "gid": 0
     },
-
     "rlimits": [
       {
         "type": "RLIMIT_NOFILE",
         "soft": 65535,
         "hard": 65535
       }
-    ]
+    ],
+    "noNewPrivileges": false
   },
-
   "root": {
     "path": "rootfs",
     "readonly": false
   },
-
   "mounts": [
     {
       "destination": "/proc",
@@ -66,9 +61,17 @@
       "destination": "/sys",
       "type": "sysfs",
       "source": "sysfs"
+    },
+    {
+      "destination": "/homebridge",
+      "type": "bind",
+      "source": "/mnt/X6/UXC/homebridge/data",
+      "options": [
+        "rbind",
+        "rw"
+      ]
     }
   ],
-
   "linux": {
     "namespaces": [
       {
