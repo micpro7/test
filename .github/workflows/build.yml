@@ -6,8 +6,10 @@ on:
   schedule:
     - cron: "0 3 * * 0"
 
+
 permissions:
   contents: write
+
 
 jobs:
 
@@ -15,33 +17,34 @@ jobs:
 
     runs-on: ubuntu-latest
 
+
     steps:
 
       # ==========================================================
-      # Checkout
+      # Checkout repository
       # ==========================================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
 
       # ==========================================================
-      # QEMU ARM64 support
+      # ARM64 emulation
       # ==========================================================
       - name: Setup QEMU
         uses: docker/setup-qemu-action@v3
 
 
       # ==========================================================
-      # Buildx
+      # Docker Buildx
       # ==========================================================
-      - name: Setup Docker Buildx
+      - name: Setup Buildx
         uses: docker/setup-buildx-action@v3
 
 
       # ==========================================================
-      # Build Homebridge image
+      # Build Homebridge ARM64 image
       # ==========================================================
-      - name: Build Homebridge builder image
+      - name: Build Homebridge image
         run: |
           set -eux
 
@@ -57,9 +60,9 @@ jobs:
 
 
       # ==========================================================
-      # Extract metadata
+      # Extract versions
       # ==========================================================
-      - name="Extract Homebridge metadata"
+      - name: Extract build information
         run: |
           set -eux
 
@@ -89,44 +92,48 @@ jobs:
           )
 
 
+          echo "DATE=$DATE" >> "$GITHUB_ENV"
           echo "HB_VERSION=$HB_VERSION" >> "$GITHUB_ENV"
           echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_ENV"
           echo "NPM_VERSION=$NPM_VERSION" >> "$GITHUB_ENV"
-          echo "DATE=$DATE" >> "$GITHUB_ENV"
 
 
       # ==========================================================
-      # Create UXC OCI bundle
+      # Create UXC bundle
       # ==========================================================
       - name: Create UXC bundle
         run: |
           set -eux
 
+
           mkdir -p bundle/rootfs
 
 
-          CID=$(docker create \
+          CONTAINER_ID=$(docker create \
             --platform linux/arm64 \
             homebridge-build:local
           )
 
 
-          docker export "$CID" \
+          docker export \
+            "$CONTAINER_ID" \
             -o rootfs.tar
 
 
-          docker rm "$CID"
+          docker rm "$CONTAINER_ID"
 
 
           tar -xf rootfs.tar \
             -C bundle/rootfs
 
 
-          cat > bundle/config.json <<EOF
+          cat > bundle/config.json <<'EOF'
 {
   "ociVersion": "1.0.2",
+
   "process": {
     "terminal": false,
+
     "args": [
       "/sbin/tini",
       "--",
@@ -134,22 +141,31 @@ jobs:
       "-U",
       "/var/lib/homebridge"
     ],
+
     "env": [
       "PATH=/usr/local/bin:/usr/bin:/bin",
       "TZ=Europe/London",
       "NODE_OPTIONS=--max-old-space-size=256"
     ],
+
     "cwd": "/var/lib/homebridge"
   },
+
+
   "root": {
     "path": "rootfs",
     "readonly": false
   },
+
+
   "mounts": [
     {
       "destination": "/var/lib/homebridge",
+
       "type": "bind",
+
       "source": "/mnt/X6/UXC/homebridge/data",
+
       "options": [
         "rbind",
         "rw"
@@ -164,11 +180,12 @@ EOF
 
 
       # ==========================================================
-      # Package bundle
+      # Package release archive
       # ==========================================================
-      - name: Package release archive
+      - name: Package Homebridge bundle
         run: |
           set -eux
+
 
           tar \
             -czpf \
@@ -182,29 +199,31 @@ EOF
       # ==========================================================
       # Create GitHub release
       # ==========================================================
-      - name: Create GitHub release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
 
         with:
+
           tag_name: "homebridge-${{ env.HB_VERSION }}-${{ env.DATE }}"
 
-          name: |
-            Homebridge v${{ env.HB_VERSION }}-${{ env.DATE }}
+          name: "Homebridge v${{ env.HB_VERSION }}-${{ env.DATE }}"
+
 
           body: |
-            ## Homebridge UXC ARM64 Bundle
+            # Homebridge UXC ARM64 Bundle
 
             Homebridge:
             ${{ env.HB_VERSION }}
 
-            Node:
+            Node.js:
             ${{ env.NODE_VERSION }}
 
             npm:
             ${{ env.NPM_VERSION }}
 
-            Built:
+            Build date:
             ${{ env.DATE }}
+
 
           files: |
             homebridge-arm64.tar.gz
