@@ -28,7 +28,6 @@ RUN apk add --no-cache \
     libstdc++ \
     avahi \
     avahi-tools \
-    avahi-daemon \
     dbus
 
 
