@@ -1,4 +1,3 @@
-```dockerfile
 # syntax=docker/dockerfile:1
 
 ###############################################################################
@@ -90,4 +89,3 @@ RUN chmod +x /init && \
     chown -R homebridge:homebridge /homebridge
 
 ENTRYPOINT ["/sbin/tini","--","/init"]
-```
