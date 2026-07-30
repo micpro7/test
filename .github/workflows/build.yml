@@ -23,7 +23,7 @@ on:
       - "Dockerfile"
       - "init"
       - "config.json"
-      - ".github/workflows/build-release.yml"
+      - ".github/workflows/build.yml"
 
 
 permissions:
