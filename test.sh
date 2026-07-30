@@ -311,7 +311,7 @@ fi
 
 
 
-if [ ! -f "$BUNDLE_PATH/rootfs/init" ]; then
+if [ ! -x "$BUNDLE_PATH/rootfs/init" ]; then
 
     echo "❌ ERROR: Missing container init script."
 
