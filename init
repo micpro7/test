@@ -1,101 +1,73 @@
-#!/bin/sh
-#
-# Homebridge UXC Runtime Init
-# Designed for OpenWrt UXC micro-containers
-# Runs as UID 0
-#
+#!/bin/sh /etc/rc.common
 
-set -e
+START=99
+STOP=10
 
+USE_PROCD=1
 
-echo "======================================"
-echo " Homebridge UXC Container Starting"
-echo "======================================"
+NAME="homebridge"
+BUNDLE="/mnt/X6/UXC/homebridge/bundle"
 
 
-# ==========================================================
-# Environment
-# ==========================================================
-
-export NODE_ENV=production
-
-export NODE_OPTIONS="--max-old-space-size=128"
-
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
-
-# ==========================================================
-# Persistent Directories
-# ==========================================================
-
-mkdir -p \
-    /homebridge \
-    /homebridge/accessories \
-    /homebridge/backups \
-    /homebridge/logs \
-    /homebridge/persist
-
-
-
-# ==========================================================
-# Homebridge Config
-# ==========================================================
-
-if [ ! -f /homebridge/config.json ]; then
-
-    echo "No Homebridge config found."
-
-    cat > /homebridge/config.json <<'EOF'
+start_service()
 {
-    "bridge": {
-        "name": "Homebridge UXC",
-        "username": "0E:00:00:00:00:00",
-        "port": 51826,
-        "pin": "031-45-154"
-    },
+        [ -z "$1" ] || true
 
-    "accessories": [],
+        logger -t homebridge_init "Waiting for /mnt/X6..."
 
-    "platforms": []
+        while ! mountpoint -q /mnt/X6; do
+                sleep 2
+        done
+
+        logger -t homebridge_init "/mnt/X6 mounted."
+
+        if ! uxc state "$NAME" >/dev/null 2>&1; then
+                logger -t homebridge_init "Creating UXC container..."
+
+                uxc create "$NAME" \
+                    --bundle "$BUNDLE" \
+                    --mounts /mnt/X6
+        fi
+
+
+        if uxc list | grep -q "$NAME.*running"; then
+                logger -t homebridge_init "Homebridge already running."
+                return
+        fi
+
+
+        logger -t homebridge_init "Starting Homebridge container..."
+
+        uxc start "$NAME"
+
+        sleep 5
+
+
+        if uxc list | grep -q "$NAME.*running"; then
+                logger -t homebridge_init "Homebridge started successfully."
+        else
+                logger -t homebridge_init "Homebridge failed to start."
+        fi
 }
-EOF
-
-fi
 
 
+stop_service()
+{
+        logger -t homebridge_init "Stopping Homebridge..."
 
-# ==========================================================
-# Avahi mDNS
-# ==========================================================
-
-if command -v avahi-daemon >/dev/null 2>&1; then
-
-    echo "Starting Avahi..."
-
-    mkdir -p /run/avahi-daemon
-
-    avahi-daemon \
-        --daemonize \
-        --no-chroot \
-        2>/dev/null || true
-
-fi
+        uxc stop "$NAME" 2>/dev/null || true
+}
 
 
+restart()
+{
+        stop_service
+        sleep 3
+        start_service
+}
 
-# ==========================================================
-# Fix permissions
-# ==========================================================
 
-chmod -R 755 /homebridge
-
-
-
-# ==========================================================
-# Start Homebridge
-# ==========================================================
-
-echo "Starting Homebridge..."
-
-exec homebridge \
-    -U /homebridge
+service_triggers()
+{
+        procd_add_reload_trigger "homebridge"
+}
