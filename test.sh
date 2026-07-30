@@ -1,74 +1,102 @@
+
 #!/bin/sh
-# Safe-mode: Exit immediately if any command fails
+# ==============================================================================
+# HOMEBRIDGE UXC MASTER INITIALIZATION ENGINE
+# Production Deployment Script
+# OpenWrt + UXC + ARM64 Homebridge Bundle
+# ==============================================================================
+
+# Safe mode: stop immediately on errors
 set -e
 
 echo "========================================================"
-echo " ⚡ HOMEBRIDGE UXC MASTER INITIALIZATION ENGINE v2 ⚡"
+echo " ⚡ HOMEBRIDGE UXC MASTER INITIALIZATION ENGINE ⚡"
 echo "========================================================"
 printf '\n\n\n'
 
 
 # ==============================================================================
-# PART 1: MASTER CONFIGURATION VARIABLES (Central Variables Hub)
+# PART 1: MASTER CONFIGURATION VARIABLES
 # ==============================================================================
+
 
 # ==============================================================================
 # GITHUB DOWNLOAD CONFIGURATION
 # ==============================================================================
 
-BUNDLE_URL="https://github.com/micpro7/openwrt-uxc-homebridge/releases/latest/download/homebridge-arm64.tar.gz"
+BUNDLE_URL="https://github.com/micpro7/test/releases/latest/download/homebridge-arm64.tar.gz"
+
 
 # ==============================================================================
-# CONFIGURATION VARIABLES (Edit these to tune your deployment)
+# INSTALLATION VARIABLES
 # ==============================================================================
 
 CONTAINER_NAME="homebridge"
 
-# Physical SSD mount point
+# Physical SSD mount location
 TARGET_MOUNT="/mnt/X6"
 
 
-# Derived Variables
+# ==============================================================================
+# DERIVED STORAGE PATHS
+# ==============================================================================
+
+# Download archive location
 ARCHIVE="$TARGET_MOUNT/homebridge.tar.gz"
 
+# UXC OCI bundle location
 BUNDLE_PATH="$TARGET_MOUNT/UXC/$CONTAINER_NAME/bundle"
 
-# NEW:
-# Persistent Homebridge data now maps directly to /homebridge
-PERSISTENT_DATA_SOURCE="$TARGET_MOUNT/UXC/$CONTAINER_NAME/homebridge"
+# Persistent Homebridge data location
+PERSISTENT_DATA_SOURCE="$TARGET_MOUNT/UXC/$CONTAINER_NAME/data"
+
+
 
 # ==============================================================================
-# ENVIRONMENT VARIABLES & PERFORMANCE TUNING
+# ENVIRONMENT SETTINGS
 # ==============================================================================
 
+# System timezone
 TIMEZONE="Europe/London"
 
-# Host Avahi handles mDNS.
-# Kept for compatibility with Homebridge environment.
+# Interface used for mDNS advertisements
 MDNS_NET_INTERFACE="br-lan"
 
-# Node memory tuning
+# Node.js heap allocation
 NODE_MEMORY_LIMIT="256"
 
 # Libuv worker threads
 THREAD_POOL_SIZE="4"
 
-# Homebridge UI binding
+# Homebridge UI bind address
 BIND_IP="0.0.0.0"
 
-# Security Parameters
+
+
+# ==============================================================================
+# SECURITY SETTINGS
+# ==============================================================================
+
+# Prevent privilege escalation inside container
+# true = restricted
+# false = normal container behaviour
+
 NO_NEW_PRIVILEGES=false
 
 
-# ==============================================================================
-
 
 # ==============================================================================
-# PHASE 0.5: CREATE CENTRAL VARIABLE ENVIRONMENT FILE
+# PHASE 0: CREATE MASTER VARIABLE MAP
 # ==============================================================================
+
 echo "📝 Creating persistent Homebridge variable map..."
 
+
 cat > /etc/homebridge.conf << EOF
+# ==============================================================================
+# Auto-generated Homebridge UXC configuration
+# ==============================================================================
+
 CONTAINER_NAME="$CONTAINER_NAME"
 
 TARGET_MOUNT="$TARGET_MOUNT"
@@ -76,6 +104,7 @@ TARGET_MOUNT="$TARGET_MOUNT"
 BUNDLE_PATH="$BUNDLE_PATH"
 
 PERSISTENT_DATA_SOURCE="$PERSISTENT_DATA_SOURCE"
+
 
 TIMEZONE="$TIMEZONE"
 
@@ -87,13 +116,17 @@ THREAD_POOL_SIZE="$THREAD_POOL_SIZE"
 
 BIND_IP="$BIND_IP"
 
+
 NO_NEW_PRIVILEGES="$NO_NEW_PRIVILEGES"
 
 EOF
 
+
 chmod 600 /etc/homebridge.conf
 
-echo "✅ Central variable map saved to /etc/homebridge.conf"
+
+echo "✅ Variable map saved:"
+echo "   /etc/homebridge.conf"
 
 echo "========(+) DONE ✅ (+)========"
 
@@ -101,44 +134,45 @@ printf '\n\n\n'
 
 
 
-# ==========================================
-# Phase 1: Environment & Dependency Check
-# ==========================================
-echo "🔄 [Phase 1] Syncing OpenWrt core infrastructure dependencies..."
+# ==============================================================================
+# PHASE 1: ENVIRONMENT & DEPENDENCY CHECK
+# ==============================================================================
 
 
+echo "🔄 [Phase 1] Syncing OpenWrt dependencies..."
 
-# Verify SSD mount before writing
-echo "🔍 Verifying target storage..."
+
+echo "🔍 Checking SSD mount..."
 
 
 if ! grep -qs " $TARGET_MOUNT " /proc/mounts; then
 
-    echo "❌ Error: $TARGET_MOUNT is not mounted. Aborting to avoid RAM writes." >&2
+    echo "❌ ERROR: $TARGET_MOUNT is not mounted."
+    echo "Aborting to prevent writing into RAM."
 
     exit 1
 
 fi
 
 
-echo "✅ $TARGET_MOUNT verified successfully."
+echo "✅ $TARGET_MOUNT mounted successfully."
 
+
+echo "📦 Installing required packages..."
 
 
 apk update
 
-
-# Keep Avahi installed
-# Homebridge discovery remains compatible with host mDNS setup
 
 apk add --no-cache \
     uxc \
     procd-ujail \
     kmod-veth \
     jq \
-    avahi \
-    avahi-tools
+    curl
 
+
+echo "✅ Dependencies installed."
 
 
 echo "========(+) DONE ✅ (+)========"
@@ -147,11 +181,12 @@ printf '\n\n\n'
 
 
 
-# ==========================================
-# Phase 2: Runtime Workspace Purge
-# ==========================================
-echo "🧹 [Phase 2] Clearing out stale runtime structures..."
+# ==============================================================================
+# PHASE 2: REMOVE OLD UXC INSTANCE
+# ==============================================================================
 
+
+echo "🧹 [Phase 2] Removing previous Homebridge runtime..."
 
 
 uxc kill "$CONTAINER_NAME" 2>/dev/null || true
@@ -160,99 +195,101 @@ uxc delete "$CONTAINER_NAME" --force 2>/dev/null || true
 
 
 
-echo "[i] Removing previous container bundle..."
+echo "🗑 Removing old bundle..."
+
 
 rm -rf "$BUNDLE_PATH"
 
 
 
 echo "========(+) DONE ✅ (+)========"
+
 printf '\n\n\n'
 
 
 
-# ==========================================
-# Phase 3: Structural Path Assembly
-# ==========================================
-echo "📂 [Phase 3] Constructing host storage target directories..."
+# ==============================================================================
+# PHASE 3: CREATE STORAGE STRUCTURE
+# ==============================================================================
 
-echo "[i] Creating bundle directory..."
+
+echo "📂 [Phase 3] Creating Homebridge storage layout..."
+
 
 mkdir -p "$BUNDLE_PATH"
 
-
-
-echo "[i] Creating persistent Homebridge storage..."
-
-mkdir -p \
-"$PERSISTENT_DATA_SOURCE/accessories" \
-"$PERSISTENT_DATA_SOURCE/backups" \
-"$PERSISTENT_DATA_SOURCE/logs" \
-"$PERSISTENT_DATA_SOURCE/persist" \
-"$PERSISTENT_DATA_SOURCE/node_modules"
-
+mkdir -p "$PERSISTENT_DATA_SOURCE"
 
 
 sync
 
+
+echo "Bundle:"
+echo " $BUNDLE_PATH"
+
+echo
+
+echo "Persistent data:"
+echo " $PERSISTENT_DATA_SOURCE"
 
 
 echo "========(+) DONE ✅ (+)========"
 
 printf '\n\n\n'
 
+# ==============================================================================
+# PART 4: DOWNLOAD AND VERIFY HOMEBRIDGE UXC BUNDLE
+# ==============================================================================
 
 
-# ==========================================
-# Phase 4: Bundle Fetch & Verification
-# ==========================================
-echo "📥 [Phase 4] Pulling production blueprint package from GitHub..."
+echo "📥 [Phase 4] Downloading production Homebridge bundle..."
 
 
+if ! wget -q --show-progress \
+    -O "$ARCHIVE" \
+    "$BUNDLE_URL"; then
 
-if ! wget -q --show-progress -O "$ARCHIVE" "$BUNDLE_URL"; then
-
-    echo "❌ Error: Failed to download Homebridge bundle." >&2
-
+    echo "❌ ERROR: Failed to download Homebridge bundle."
     exit 1
 
 fi
-printf '\n\n\n'
 
 
-
-echo "📦 Extracting package payload onto $TARGET_MOUNT storage..."
-
+echo
+echo "📦 Extracting bundle into:"
+echo "   $BUNDLE_PATH"
 
 
 if ! tar -xpf "$ARCHIVE" -C "$BUNDLE_PATH"; then
 
-    echo "❌ Error: Failed to extract Homebridge bundle." >&2
+    echo "❌ ERROR: Failed to extract bundle."
 
     rm -f "$ARCHIVE"
-
     rm -rf "$BUNDLE_PATH"
 
     exit 1
 
 fi
-
 
 
 sync
 
 
 rm -f "$ARCHIVE"
-printf '\n\n\n'
 
 
 
-# Validate bundle structure
+# ==============================================================================
+# BUNDLE STRUCTURE VALIDATION
+# ==============================================================================
 
 
-if [ ! -f "$BUNDLE_PATH/config.json" ] || [ ! -d "$BUNDLE_PATH/rootfs" ]; then
+echo "🔍 Validating bundle structure..."
 
-    echo "❌ [ERROR] Missing critical bundle files. Halting deployment." >&2
+
+if [ ! -f "$BUNDLE_PATH/config.json" ]; then
+
+    echo "❌ ERROR: Missing OCI config.json."
 
     rm -rf "$BUNDLE_PATH"
 
@@ -262,12 +299,44 @@ fi
 
 
 
-# Validate JSON
+if [ ! -d "$BUNDLE_PATH/rootfs" ]; then
+
+    echo "❌ ERROR: Missing rootfs directory."
+
+    rm -rf "$BUNDLE_PATH"
+
+    exit 1
+
+fi
+
+
+
+if [ ! -f "$BUNDLE_PATH/rootfs/init" ]; then
+
+    echo "❌ ERROR: Missing container init script."
+
+    rm -rf "$BUNDLE_PATH"
+
+    exit 1
+
+fi
+
+
+
+echo "   config.json detected       ✅"
+echo "   rootfs detected            ✅"
+echo "   init script detected       ✅"
+
+
+
+# ==============================================================================
+# JSON VALIDATION
+# ==============================================================================
 
 
 if ! jq empty "$BUNDLE_PATH/config.json" >/dev/null 2>&1; then
 
-    echo "❌ [ERROR] config.json is invalid or corrupt." >&2
+    echo "❌ ERROR: config.json is invalid JSON."
 
     rm -rf "$BUNDLE_PATH"
 
@@ -276,169 +345,854 @@ if ! jq empty "$BUNDLE_PATH/config.json" >/dev/null 2>&1; then
 fi
 
 
+echo "   OCI JSON validated         ✅"
 
-echo "   config.json validated  ✅"
 
-echo "   rootfs engine verified ✅"
-
-echo "🚀 OCI application bundle authenticated."
-
+echo "🚀 Homebridge UXC bundle authenticated."
 
 
 echo "========(+) DONE ✅ (+)========"
+
+
 printf '\n\n\n'
 
-# ==========================================
-# Phase 5: Dynamic Variable Injection (JQ Splits)
-# ==========================================
 
-echo "📝 [Phase 5] Injecting Homebridge runtime matrix via individual JQ splits..."
+
+# ==============================================================================
+# PART 5: OCI CONFIGURATION INJECTION
+# ==============================================================================
+
+
+echo "📝 [Phase 5] Applying runtime configuration..."
 
 
 
 # ==============================================================================
-# Split 1: Update Persistent Storage Path Mount Source
-# Official Homebridge container layout: /homebridge
-# ==============================================================================
-jq --arg src "$PERSISTENT_DATA_SOURCE" \
-'.mounts = (.mounts | map(if .destination == "/homebridge" then .source = $src else . end))' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
-&& mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
-
-
-
-echo "   ↳ Persistent Homebridge storage bound to: $PERSISTENT_DATA_SOURCE ✅"
-
-
-
-
-
-# ==============================================================================
-# Split 2: Update Timezone
-# ==============================================================================
-jq --arg tz "TZ=$TIMEZONE" \
-'.process.env = (.process.env | map(if startswith("TZ=") then $tz else . end))' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
-&& mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
-echo "   ↳ Timezone assigned to: $TIMEZONE ✅"
-
-
-
-
-
-# ==============================================================================
-# Split 3: Homebridge Storage Path
+# 1. Persistent Homebridge Storage Mount
 #
-# Critical change:
-# Homebridge data is now permanently stored in /homebridge
+# Dockerfile:
+#     VOLUME ["/homebridge"]
+#
+# Therefore UXC must mount:
+#     /homebridge -> SSD persistent folder
 # ==============================================================================
-jq \
-'.process.env += ["HOMEBRIDGE_STORAGE_PATH=/homebridge"]' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
+
+
+jq --arg src "$PERSISTENT_DATA_SOURCE" '
+
+.mounts |= map(
+    if .destination == "/homebridge"
+    then .source = $src
+    else .
+    end
+)
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
 && mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
-echo "   ↳ Homebridge storage path forced to /homebridge ✅"
+
+
+echo "   ↳ Persistent storage:"
+echo "      $PERSISTENT_DATA_SOURCE"
+
 
 
 # ==============================================================================
-# Split 4: Enable Config UI X
+# 2. Timezone
 # ==============================================================================
-jq \
-'.process.env += ["HOMEBRIDGE_CONFIG_UI=1"]' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
+
+
+jq --arg value "TZ=$TIMEZONE" '
+
+.process.env |= map(
+    if startswith("TZ=")
+    then $value
+    else .
+    end
+)
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
 && mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
-echo "   ↳ Homebridge Config UI enabled ✅"
+
+
+echo "   ↳ Timezone:"
+echo "      $TIMEZONE"
+
 
 
 # ==============================================================================
-# Split 5: Update Node.js Heap Memory
+# 3. mDNS Interface
 # ==============================================================================
-jq --arg node_opt "NODE_OPTIONS=--max-old-space-size=$NODE_MEMORY_LIMIT" \
-'.process.env = (.process.env | map(if startswith("NODE_OPTIONS=") then $node_opt else . end))' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
+
+
+jq --arg value "MDNS_INTERFACE=$MDNS_NET_INTERFACE" '
+
+.process.env |= map(
+    if startswith("MDNS_INTERFACE=")
+    then $value
+    else .
+    end
+)
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
 && mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
-echo "   ↳ Node.js heap limit set to ${NODE_MEMORY_LIMIT}MB ✅"
+
+
+echo "   ↳ mDNS interface:"
+echo "      $MDNS_NET_INTERFACE"
+
 
 
 # ==============================================================================
-# Split 6: Update Libuv Thread Pool
+# 4. Node.js Memory Limit
 # ==============================================================================
-jq --arg threads "UV_THREADPOOL_SIZE=$THREAD_POOL_SIZE" \
-'.process.env = (.process.env | map(if startswith("UV_THREADPOOL_SIZE=") then $threads else . end))' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
+
+
+jq --arg value "NODE_OPTIONS=--max-old-space-size=$NODE_MEMORY_LIMIT" '
+
+.process.env |= map(
+    if startswith("NODE_OPTIONS=")
+    then $value
+    else .
+    end
+)
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
 && mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
-echo "   ↳ Libuv worker threads balanced at: $THREAD_POOL_SIZE ✅"
+
+
+echo "   ↳ Node memory:"
+echo "      ${NODE_MEMORY_LIMIT}MB"
 
 
 
 # ==============================================================================
-# Split 7: Update Homebridge Network Binding
+# 5. Libuv Thread Pool
 # ==============================================================================
-jq --arg ip "HOMEBRIDGE_IP=$BIND_IP" \
-'.process.env = (.process.env | map(if startswith("HOMEBRIDGE_IP=") then $ip else . end))' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
+
+
+jq --arg value "UV_THREADPOOL_SIZE=$THREAD_POOL_SIZE" '
+
+.process.env |= map(
+    if startswith("UV_THREADPOOL_SIZE=")
+    then $value
+    else .
+    end
+)
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
 && mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
-echo "   ↳ Network bind target set to: $BIND_IP ✅"
+
+
+echo "   ↳ Libuv threads:"
+echo "      $THREAD_POOL_SIZE"
 
 
 
 # ==============================================================================
-# Split 8: Kernel Security Boundary
+# 6. Homebridge Config UI Host
+#
+# Replace existing value or create if missing
 # ==============================================================================
-jq --argjson nnp "$NO_NEW_PRIVILEGES" \
-'.process.noNewPrivileges = $nnp' \
-"$BUNDLE_PATH/config.json" > "$BUNDLE_PATH/config.json.tmp" \
+
+
+jq --arg value "HOMEBRIDGE_CONFIG_UI_HOST=$BIND_IP" '
+
+.process.env |=
+(
+    if map(select(startswith("HOMEBRIDGE_CONFIG_UI_HOST="))) | length > 0
+
+    then
+        map(
+            if startswith("HOMEBRIDGE_CONFIG_UI_HOST=")
+            then $value
+            else .
+            end
+        )
+
+    else
+        . + [$value]
+
+    end
+)
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
 && mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
-echo "   ↳ Kernel privilege escalation guard: $NO_NEW_PRIVILEGES ✅"
+
+
+echo "   ↳ Homebridge UI host:"
+echo "      $BIND_IP"
 
 
 
+# ==============================================================================
+# 7. noNewPrivileges Security Setting
+# ==============================================================================
 
 
-printf '\n\n\n'
+jq --argjson value "$NO_NEW_PRIVILEGES" '
+
+.process.noNewPrivileges = $value
+
+' "$BUNDLE_PATH/config.json" \
+> "$BUNDLE_PATH/config.json.tmp" \
+&& mv "$BUNDLE_PATH/config.json.tmp" "$BUNDLE_PATH/config.json"
 
 
-echo "⚙️ UXC Homebridge blueprint compiled permanently onto SSD."
+
+echo "   ↳ noNewPrivileges:"
+echo "      $NO_NEW_PRIVILEGES"
+
+
+
+echo
+
+echo "⚙️ OCI blueprint compiled."
 
 echo "========(+) DONE ✅ (+)========"
+
+
 printf '\n\n\n'
 
-
-# ==========================================
-# Phase 6: Container Registration & Ignition
-# ==========================================
-echo "🏗️ [Phase 6] Registering container blueprint with UXC engine..."
+# ==============================================================================
+# PART 6: UXC CONTAINER REGISTRATION & STARTUP
+# ==============================================================================
 
 
+echo "🏗️ [Phase 6] Registering Homebridge with UXC engine..."
 
-uxc create "$CONTAINER_NAME" \
+
+# Remove any previous registration just in case
+
+uxc kill "$CONTAINER_NAME" 2>/dev/null || true
+
+uxc delete "$CONTAINER_NAME" --force 2>/dev/null || true
+
+
+
+echo "📦 Creating UXC container instance..."
+
+
+if ! uxc create "$CONTAINER_NAME" \
     --bundle "$BUNDLE_PATH" \
-    --mounts "$TARGET_MOUNT"
+    --mounts "$TARGET_MOUNT"; then
+
+    echo "❌ ERROR: Failed to create UXC container."
+
+    exit 1
+
+fi
 
 
 
-printf '\n\n\n'
+echo "✅ UXC container registered."
 
 
-echo "⏳ Holding engine execution for stabilization (3s)..."
+printf '\n\n'
+
+
+echo "⏳ Waiting for runtime stabilization..."
 
 sleep 3
 
-printf '\n\n\n'
 
-echo "🏁 Spawning Homebridge runtime daemon..."
-
-uxc start "$CONTAINER_NAME"
-printf '\n\n\n'
+printf '\n\n'
 
 
-echo "✨ Active container framework status verified:"
+echo "🚀 Starting Homebridge..."
+
+
+if ! uxc start "$CONTAINER_NAME"; then
+
+    echo "❌ ERROR: Failed to start Homebridge."
+
+    exit 1
+
+fi
+
+
+
+printf '\n\n'
+
+
+echo "✨ Current UXC status:"
+
 uxc list
 
+
+
 echo "========(+) DONE ✅ (+)========"
+
+
 printf '\n\n\n'
+
+
+
+# ==============================================================================
+# PART 7: INSTALL PROCD AUTOSTART SERVICE
+# ==============================================================================
+
+
+echo "🛠️ Installing persistent Homebridge procd service..."
+
+
+
+cat > /etc/init.d/homebridge << 'EOF'
+#!/bin/sh /etc/rc.common
+
+
+START=99
+STOP=10
+
+
+# Allow:
+# /etc/init.d/homebridge status
+
+extra_command "status" "Show Homebridge container status"
+
+
+
+# ==============================================================================
+# LOAD CONFIGURATION
+# ==============================================================================
+
+
+if [ -f /etc/homebridge.conf ]; then
+
+    . /etc/homebridge.conf
+
+else
+
+    logger -t homebridge_init \
+    "[CRITICAL] Missing /etc/homebridge.conf"
+
+    exit 1
+
+fi
+
+
+
+# ==============================================================================
+# START
+#
+# Flow:
+# Wait SSD
+# Verify bundle
+# Remove stale runtime
+# Register container
+# Start Homebridge
+# ==============================================================================
+
+
+start()
+{
+
+logger -t homebridge_init \
+"Waiting for $TARGET_MOUNT..."
+
+
+
+for i in $(seq 1 30)
+do
+
+    if grep -qs " $TARGET_MOUNT " /proc/mounts
+    then
+
+        logger -t homebridge_init \
+        "$TARGET_MOUNT mounted."
+
+        break
+
+    fi
+
+
+    sleep 1
+
+done
+
+
+
+if ! grep -qs " $TARGET_MOUNT " /proc/mounts
+then
+
+    logger -t homebridge_init \
+    "[CRITICAL] SSD mount unavailable."
+
+    return 1
+
+fi
+
+
+
+if [ ! -f "$BUNDLE_PATH/config.json" ]
+then
+
+    logger -t homebridge_init \
+    "[CRITICAL] Missing UXC bundle."
+
+    return 1
+
+fi
+
+
+
+logger -t homebridge_init \
+"Cleaning previous container state..."
+
+
+
+/sbin/uxc kill "$CONTAINER_NAME" \
+>/dev/null 2>&1 || true
+
+
+/sbin/uxc delete "$CONTAINER_NAME" \
+--force >/dev/null 2>&1 || true
+
+
+
+logger -t homebridge_init \
+"Registering Homebridge UXC instance..."
+
+
+
+if ! /sbin/uxc create \
+"$CONTAINER_NAME" \
+--bundle "$BUNDLE_PATH" \
+--mounts "$TARGET_MOUNT"
+then
+
+    logger -t homebridge_init \
+    "[CRITICAL] UXC create failed."
+
+    return 1
+
+fi
+
+
+
+sleep 1
+
+
+
+logger -t homebridge_init \
+"Starting Homebridge container..."
+
+
+
+if ! /sbin/uxc start "$CONTAINER_NAME"
+then
+
+    logger -t homebridge_init \
+    "[CRITICAL] UXC start failed."
+
+    return 1
+
+fi
+
+
+
+logger -t homebridge_init \
+"Homebridge started successfully."
+
+
+
+}
+
+
+
+# ==============================================================================
+# STOP
+#
+# Graceful shutdown first
+# Force kill fallback
+# ==============================================================================
+
+
+stop()
+{
+
+
+logger -t homebridge_init \
+"Stopping Homebridge..."
+
+
+
+/sbin/uxc kill "$CONTAINER_NAME" \
+>/dev/null 2>&1 || true
+
+
+
+for i in 1 2 3
+do
+
+
+STATE=$(
+/sbin/uxc state "$CONTAINER_NAME" \
+2>/dev/null | jq -r '.status'
+)
+
+
+
+if [ "$STATE" != "running" ]
+then
+
+    logger -t homebridge_init \
+    "Homebridge stopped."
+
+    return 0
+
+fi
+
+
+
+sleep 1
+
+
+done
+
+
+
+logger -t homebridge_init \
+"Force stopping Homebridge..."
+
+
+
+/sbin/uxc kill "$CONTAINER_NAME" \
+--signal KILL \
+>/dev/null 2>&1 || true
+
+
+
+sleep 1
+
+
+
+logger -t homebridge_init \
+"Homebridge force stopped."
+
+
+
+}
+
+
+
+# ==============================================================================
+# STATUS
+# ==============================================================================
+
+
+status()
+{
+
+
+if [ ! -x /sbin/uxc ]
+then
+
+    echo "uxc missing"
+
+    return 1
+
+fi
+
+
+
+JSON=$(
+/sbin/uxc state "$CONTAINER_NAME" \
+2>/dev/null
+)
+
+
+
+if [ -n "$JSON" ]
+then
+
+    echo "$JSON" | jq -r '.status'
+
+
+    echo "$JSON" \
+    | jq -e '.status=="running"' \
+    >/dev/null 2>&1
+
+
+    return $?
+
+fi
+
+
+
+echo "stopped"
+
+return 1
+
+
+
+}
+
+
+
+EOF
+
+
+
+chmod +x /etc/init.d/homebridge
+
+
+
+/etc/init.d/homebridge enable
+
+
+
+echo "✅ Homebridge procd service installed."
+
+
+echo "========(+) DONE ✅ (+)========"
+
+
+printf '\n\n\n'
+
+# ==============================================================================
+# PART 8: FINAL VERIFICATION & DEPLOYMENT COMPLETION
+# ==============================================================================
+
+
+echo "🔎 Performing final Homebridge deployment verification..."
+
+
+printf '\n\n'
+
+
+
+# ==============================================================================
+# VERIFY PROCD SERVICE
+# ==============================================================================
+
+
+echo "🛠 Checking procd service..."
+
+
+if [ -x /etc/init.d/homebridge ]; then
+
+    echo "   Homebridge init service found ✅"
+
+else
+
+    echo "❌ ERROR: Homebridge init service missing."
+
+    exit 1
+
+fi
+
+
+
+echo "   Service enabled:"
+
+ls -l /etc/rc.d/ | grep homebridge || true
+
+
+
+printf '\n\n'
+
+
+
+# ==============================================================================
+# VERIFY UXC CONTAINER
+# ==============================================================================
+
+
+echo "📦 Checking UXC container state..."
+
+
+uxc list
+
+
+
+printf '\n\n'
+
+
+
+# ==============================================================================
+# VERIFY STORAGE
+# ==============================================================================
+
+
+echo "💾 Checking persistent storage..."
+
+
+echo
+
+echo "Bundle location:"
+echo " $BUNDLE_PATH"
+
+
+echo
+
+echo "Persistent data:"
+echo " $PERSISTENT_DATA_SOURCE"
+
+
+
+if [ -d "$PERSISTENT_DATA_SOURCE" ]; then
+
+    echo "   Persistent directory exists ✅"
+
+else
+
+    echo "❌ ERROR: Persistent directory missing."
+
+    exit 1
+
+fi
+
+
+
+printf '\n\n'
+
+
+
+# ==============================================================================
+# DISPLAY DISK USAGE
+# ==============================================================================
+
+
+echo "📊 Homebridge bundle size:"
+
+
+du -sh "$BUNDLE_PATH"
+
+
+
+echo
+
+
+echo "📊 Persistent data size:"
+
+
+du -sh "$PERSISTENT_DATA_SOURCE" 2>/dev/null || true
+
+
+
+printf '\n\n'
+
+
+
+# ==============================================================================
+# VERIFY OCI CONFIG AFTER PATCHING
+# ==============================================================================
+
+
+echo "🔍 Checking final OCI configuration..."
+
+
+if jq empty "$BUNDLE_PATH/config.json" >/dev/null 2>&1; then
+
+    echo "   config.json valid JSON ✅"
+
+else
+
+    echo "❌ ERROR: config.json corrupted after modification."
+
+    exit 1
+
+fi
+
+
+
+echo
+
+echo "Environment variables:"
+
+
+jq -r '
+.process.env[]
+' "$BUNDLE_PATH/config.json"
+
+
+
+printf '\n\n'
+
+
+
+# ==============================================================================
+# FINAL SYNC
+# ==============================================================================
+
+
+echo "💾 Syncing filesystem..."
+
+
+sync
+
+
+
+sleep 2
+
+
+
+# ==============================================================================
+# FINAL STATUS
+# ==============================================================================
+
+
+echo
+echo "========================================================"
+echo " 🎉 HOMEBRIDGE UXC DEPLOYMENT COMPLETE 🎉"
+echo "========================================================"
+
+
+echo
+
+echo "Container:"
+echo " $CONTAINER_NAME"
+
+
+echo
+
+echo "Bundle:"
+echo " $BUNDLE_PATH"
+
+
+echo
+
+echo "Persistent Data:"
+echo " $PERSISTENT_DATA_SOURCE"
+
+
+echo
+
+echo "Web UI:"
+echo " http://$(uci -q get network.lan.ipaddr):8581"
+
+
+echo
+
+echo "Management:"
+echo " /etc/init.d/homebridge start"
+echo " /etc/init.d/homebridge stop"
+echo " /etc/init.d/homebridge restart"
+echo " /etc/init.d/homebridge status"
+
+
+
+echo
+
+echo "========================================================"
+
+
+printf '\n\n'
+
+
+echo "⚡ Homebridge is now running under OpenWrt UXC ⚡"
+
+
+echo "========(+) DONE ✅ (+)========"
