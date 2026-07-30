@@ -1,4 +1,4 @@
-name: Build Homebridge UXC Bundle
+name: Build Homebridge UXC ARM64 Bundle
 
 on:
   workflow_dispatch:
@@ -9,196 +9,74 @@ on:
         default: "latest"
 
       config_ui_version:
-        description: "Config UI version"
+        description: "Homebridge Config UI X version"
         required: false
         default: "latest"
 
   schedule:
-    - cron: "0 6 * * 1"
-
-  push:
-    branches:
-      - main
-    paths:
-      - "Dockerfile"
-      - "init"
-      - "config.json"
-      - ".github/workflows/build.yml"
+    - cron: "0 3 * * 0"
 
 
 permissions:
   contents: write
 
 
-concurrency:
-  group: build-release
-  cancel-in-progress: true
-
-
 jobs:
 
   build:
 
-    runs-on: ubuntu-24.04-arm
+    name: Build Homebridge UXC Bundle
+    runs-on: ubuntu-24.04
 
 
     steps:
 
       # ==========================================================
-      # CHECKOUT
+      # Checkout
       # ==========================================================
 
       - name: Checkout repository
-        uses: actions/checkout@v5
-
+        uses: actions/checkout@v4
 
 
       # ==========================================================
-      # BUILDX
+      # ARM64 Support
       # ==========================================================
+
+      - name: Setup QEMU
+        uses: docker/setup-qemu-action@v3
+
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@v3
 
 
 
       # ==========================================================
-      # BUILD HOMEbridge IMAGE
+      # Build Homebridge image
       # ==========================================================
 
-      - name: Build Homebridge filesystem
+      - name: Build Homebridge ARM64 image
+        timeout-minutes: 30
         run: |
 
-          set -eux
-
-
           docker buildx build \
-            --build-arg HOMEBRIDGE_VERSION="${{ inputs.homebridge_version || 'latest' }}" \
-            --build-arg CONFIG_UI_VERSION="${{ inputs.config_ui_version || 'latest' }}" \
-            --cache-from type=gha \
-            --cache-to type=gha,mode=max \
-            --tag homebridge-build:local \
+            --platform linux/arm64 \
             --load \
+            --build-arg HOMEBRIDGE_VERSION=${{ github.event.inputs.homebridge_version || 'latest' }} \
+            --build-arg CONFIG_UI_VERSION=${{ github.event.inputs.config_ui_version || 'latest' }} \
+            -t homebridge-build:local \
             .
 
 
 
       # ==========================================================
-      # EXPORT ROOTFS
+      # Extract versions
       # ==========================================================
 
-      - name: Export container rootfs
-        run: |
-
-          set -eux
-
-
-          CID=$(docker create homebridge-build:local)
-
-
-          mkdir -p bundle/rootfs
-
-
-          docker export "$CID" -o rootfs.tar
-
-
-          docker rm "$CID"
-
-
-          sudo tar -xpf rootfs.tar -C bundle/rootfs
-
-
-          rm -f rootfs.tar
-
-
-
-      # ==========================================================
-      # CLEAN ROOTFS
-      # ==========================================================
-
-      - name: Minimize root filesystem
-        run: |
-
-          set -eux
-
-
-          sudo rm -rf \
-            bundle/rootfs/usr/share/man \
-            bundle/rootfs/usr/share/doc \
-            bundle/rootfs/var/cache/apk/* \
-            bundle/rootfs/tmp/*
-
-
-
-      # ==========================================================
-      # CREATE UXC OCI BUNDLE
-      # ==========================================================
-
-      - name: Assemble UXC bundle
-        run: |
-
-          set -eux
-
-
-          cp config.json bundle/config.json
-
-
-          python3 -m json.tool \
-            bundle/config.json \
-            > /dev/null
-
-
-
-          sudo test -x \
-            bundle/rootfs/usr/local/bin/node
-
-
-
-          cd bundle
-
-
-          sudo tar \
-            -czf ../homebridge-arm64.tar.gz \
-            config.json \
-            rootfs
-
-
-          cd ..
-
-
-          sudo chown \
-            "$(id -u):$(id -g)" \
-            homebridge-arm64.tar.gz
-
-
-
-      # ==========================================================
-      # VERIFY PACKAGE
-      # ==========================================================
-
-      - name: Validate bundle
-        run: |
-
-          set -eux
-
-
-          tar -tzf homebridge-arm64.tar.gz | grep config.json
-
-
-          tar -tzf homebridge-arm64.tar.gz | grep \
-            "rootfs/usr/local/bin/node"
-
-
-          echo "Bundle size:"
-          du -sh homebridge-arm64.tar.gz
-
-
-
-      # ==========================================================
-      # EXTRACT BUILD INFORMATION
-      # ==========================================================
-
-      - name: Collect build information
+      - name: Extract build metadata
+        timeout-minutes: 5
+        shell: bash
         run: |
 
           set -eux
@@ -207,14 +85,11 @@ jobs:
           DATE=$(date +"%Y-%m-%d")
 
 
-
           HB_VERSION=$(docker run \
             --rm \
+            --entrypoint node \
             homebridge-build:local \
-            sh -c \
-            "node -p \"require('/usr/local/lib/node_modules/homebridge/package.json').version\"" \
-          )
-
+            -p "require('homebridge/package.json').version")
 
 
           NODE_VERSION=$(docker run \
@@ -224,7 +99,6 @@ jobs:
             --version | tr -d 'v')
 
 
-
           NPM_VERSION=$(docker run \
             --rm \
             --entrypoint npm \
@@ -232,69 +106,164 @@ jobs:
             --version)
 
 
-
-          SIZE=$(du -sh homebridge-arm64.tar.gz | cut -f1)
-
-
-
           echo "HB_VERSION=$HB_VERSION" >> $GITHUB_ENV
-
           echo "NODE_VERSION=$NODE_VERSION" >> $GITHUB_ENV
-
           echo "NPM_VERSION=$NPM_VERSION" >> $GITHUB_ENV
+          echo "DATE=$DATE" >> $GITHUB_ENV
 
-          echo "SIZE=$SIZE" >> $GITHUB_ENV
 
           echo "RELEASE_NAME=Homebridge v${HB_VERSION}-${DATE}" >> $GITHUB_ENV
 
 
 
+      # ==========================================================
+      # Create UXC bundle
+      # ==========================================================
+
+      - name: Create UXC filesystem bundle
+        timeout-minutes: 15
+        run: |
+
+          set -eux
+
+
+          mkdir -p bundle/rootfs
+
+
+          CONTAINER_ID=$(docker create homebridge-build:local)
+
+
+          docker export \
+            "$CONTAINER_ID" \
+            -o rootfs.tar
+
+
+          docker rm "$CONTAINER_ID"
+
+
+          tar -xf rootfs.tar \
+            -C bundle/rootfs
+
+
+          rm rootfs.tar
+
+
 
       # ==========================================================
-      # RELEASE
+      # Generate UXC config.json
       # ==========================================================
 
-      - name: Publish GitHub Release
+      - name: Generate UXC config
+        run: |
+
+          cat > bundle/config.json <<'EOF'
+{
+  "ociVersion": "1.0.2",
+  "process": {
+    "terminal": false,
+    "args": [
+      "/sbin/tini",
+      "--",
+      "/init"
+    ],
+    "env": [
+      "PATH=/usr/local/bin:/usr/bin:/bin",
+      "TZ=Europe/London",
+      "NODE_OPTIONS=--max-old-space-size=256",
+      "UV_THREADPOOL_SIZE=4",
+      "HOMEBRIDGE_CONFIG_UI=1"
+    ],
+    "cwd": "/var/lib/homebridge",
+    "noNewPrivileges": false
+  },
+
+  "root": {
+    "path": "rootfs"
+  },
+
+  "mounts": [
+    {
+      "destination": "/var/lib/homebridge",
+      "type": "bind",
+      "source": "/mnt/X6/UXC/homebridge/data",
+      "options": [
+        "rbind",
+        "rw"
+      ]
+    }
+  ],
+
+  "linux": {
+    "namespaces": [
+      {
+        "type": "pid"
+      },
+      {
+        "type": "uts"
+      },
+      {
+        "type": "ipc"
+      },
+      {
+        "type": "mount"
+      }
+    ]
+  }
+}
+EOF
+
+
+
+      # ==========================================================
+      # Validate bundle
+      # ==========================================================
+
+      - name: Validate bundle
+        run: |
+
+          set -eux
+
+
+          test -d bundle/rootfs
+          test -f bundle/config.json
+
+
+          jq empty bundle/config.json
+
+
+          echo "Bundle validation OK"
+
+
+
+      # ==========================================================
+      # Package
+      # ==========================================================
+
+      - name: Compress bundle
+        run: |
+
+          tar -czpf \
+          homebridge-arm64.tar.gz \
+          -C bundle .
+
+
+
+      # ==========================================================
+      # Release
+      # ==========================================================
+
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
 
         with:
 
-          tag_name: latest
+          tag_name: |
+            homebridge-${{ env.HB_VERSION }}-${{ env.DATE }}
 
-          name: ${{ env.RELEASE_NAME }}
+          name: |
+            ${{ env.RELEASE_NAME }}
 
-          make_latest: true
-
-
-          files:
+          files: |
             homebridge-arm64.tar.gz
 
-
-          body: |
-
-            ## Homebridge UXC ARM64 Bundle
-
-
-            ### Build Information
-
-            - Homebridge: `${{ env.HB_VERSION }}`
-            - Node.js: `${{ env.NODE_VERSION }}`
-            - NPM: `${{ env.NPM_VERSION }}`
-            - Size: `${{ env.SIZE }}`
-            - Architecture: ARM64
-
-
-            ### Environment
-
-            - Alpine Linux 3.22
-            - Node.js 24
-            - Root execution UID 0
-            - Designed for OpenWrt UXC containers
-
-
-            ### Runtime
-
-            - Persistent data should be mounted externally
-            - Homebridge UI included
-            - Native ARM64 build
-            - Optimised for low RAM routers
+          generate_release_notes: true
