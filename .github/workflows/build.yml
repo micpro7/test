@@ -53,7 +53,7 @@ jobs:
           rm -rf output
           mkdir -p output/rootfs
 
-          ID=$(docker create homebridge-build:local)
+          ID=$(docker create --platform linux/arm64 homebridge-build:local)
 
           docker export "$ID" | tar -x -C output/rootfs
 
@@ -94,10 +94,21 @@ jobs:
 
           DATE=$(date +"%Y-%m-%d")
 
-          HB_VERSION=$(node -p \
-          "require('./output/rootfs/usr/local/lib/node_modules/homebridge/package.json').version")
+          HB_VERSION=$(
+            docker run --rm \
+            --platform linux/arm64 \
+            --entrypoint node \
+            homebridge-build:local \
+            -p "require('/usr/local/lib/node_modules/homebridge/package.json').version"
+          )
 
-          NODE_VERSION=$(node --version | tr -d 'v')
+          NODE_VERSION=$(
+            docker run --rm \
+            --platform linux/arm64 \
+            --entrypoint node \
+            homebridge-build:local \
+            --version | tr -d 'v'
+          )
 
           SIZE=$(du -sh homebridge-arm64.tar.gz | cut -f1)
 
@@ -111,6 +122,7 @@ jobs:
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+
         with:
           name: homebridge-arm64
           path: homebridge-arm64.tar.gz
@@ -121,6 +133,7 @@ jobs:
         uses: softprops/action-gh-release@v2
 
         with:
+
           tag_name: homebridge-${{ env.HB_VERSION }}
 
           name: ${{ env.RELEASE_NAME }}
