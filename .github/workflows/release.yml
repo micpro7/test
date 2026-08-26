@@ -12,12 +12,11 @@ permissions:
 
 env:
   IMAGE_NAME: homeassistant-uxc
-  PLATFORM: linux/arm64
 
 jobs:
   build:
-    name: Build ARM64 UXC bundle
-    runs-on: ubuntu-24.04
+    name: Native ARM64 UXC Build
+    runs-on: ubuntu-24.04-arm
 
     steps:
 
@@ -29,37 +28,44 @@ jobs:
         uses: actions/checkout@v4
 
       # ============================================================
-      # QEMU / BUILDX
+      # VERIFY RUNNER ARCHITECTURE
       # ============================================================
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Verify native ARM64 runner
+        run: |
+          set -eux
+
+          echo "Runner architecture:"
+          uname -m
+
+          echo "Docker architecture:"
+          docker version --format '{{.Server.Arch}}'
+
+          test "$(uname -m)" = "aarch64"
+
+      # ============================================================
+      # SET UP BUILDX
+      #
+      # No QEMU.
+      # No cross compilation.
+      # Native ARM64 Docker build.
+      # ============================================================
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       # ============================================================
-      # BUILD ARM64 IMAGE
+      # BUILD
       #
-      # Dockerfile deliberately contains:
-      #
-      # FROM python:3.14-slim-bookworm
-      #
-      # and:
-      #
-      # pip install homeassistant
-      #
-      # Therefore every build gets:
-      # - latest Python 3.14.x available from the image
-      # - latest Home Assistant available from PyPI
+      # Because the runner itself is ARM64, this is a native build.
       # ============================================================
 
-      - name: Build ARM64 Home Assistant image
+      - name: Build Home Assistant
         run: |
           set -eux
 
           docker buildx build \
-            --platform "${PLATFORM}" \
+            --platform linux/arm64 \
             --tag "${IMAGE_NAME}:latest" \
             --load \
             .
@@ -68,66 +74,62 @@ jobs:
       # VERIFY PYTHON
       # ============================================================
 
-      - name: Verify Python version
+      - name: Verify Python
         run: |
           set -eux
 
           docker run --rm \
-            --platform "${PLATFORM}" \
-            --entrypoint python3 \
             "${IMAGE_NAME}:latest" \
-            --version
+            python3 --version
 
       # ============================================================
       # VERIFY HOME ASSISTANT
       # ============================================================
 
-      - name: Verify Home Assistant version
+      - name: Verify Home Assistant
         run: |
           set -eux
 
           docker run --rm \
-            --platform "${PLATFORM}" \
             --entrypoint python3 \
             "${IMAGE_NAME}:latest" \
-            -c "import homeassistant; print('Home Assistant:', homeassistant.const.__version__)"
+            -c 'import homeassistant; print("Home Assistant:", homeassistant.const.__version__)'
 
       # ============================================================
       # SHOW INSTALLED VERSIONS
       # ============================================================
 
-      - name: Show installed package versions
+      - name: Show installed versions
         run: |
           set -eux
 
           docker run --rm \
-            --platform "${PLATFORM}" \
             --entrypoint python3 \
             "${IMAGE_NAME}:latest" \
-            -m pip show homeassistant
+            -c '
+          import platform
+          import homeassistant
+
+          print("Architecture:", platform.machine())
+          print("Python:", platform.python_version())
+          print("Home Assistant:", homeassistant.const.__version__)
+          '
 
       # ============================================================
-      # CREATE TEMPORARY CONTAINER
-      #
-      # docker export is intentional.
-      #
-      # This converts the layered Docker image into the flat
-      # filesystem required by the UXC rootfs layout.
+      # CREATE CONTAINER
       # ============================================================
 
-      - name: Create container
+      - name: Create temporary container
         id: container
         run: |
           set -eux
 
-          CID="$(docker create \
-            --platform "${PLATFORM}" \
-            "${IMAGE_NAME}:latest")"
+          CID="$(docker create "${IMAGE_NAME}:latest")"
 
           echo "container_id=${CID}" >> "${GITHUB_OUTPUT}"
 
       # ============================================================
-      # EXTRACT FLAT ROOTFS
+      # FLATTEN IMAGE TO UXC ROOTFS
       # ============================================================
 
       - name: Create UXC rootfs
@@ -142,7 +144,7 @@ jobs:
                 -C build/rootfs
 
       # ============================================================
-      # CLEAN CONTAINER
+      # CLEAN TEMPORARY CONTAINER
       # ============================================================
 
       - name: Remove temporary container
@@ -153,10 +155,10 @@ jobs:
             2>/dev/null || true
 
       # ============================================================
-      # GENERATE UXC CONFIG
+      # INSTALL UXC CONFIG
       # ============================================================
 
-      - name: Generate UXC config.json
+      - name: Install UXC config
         run: |
           set -eux
 
@@ -166,7 +168,7 @@ jobs:
              build/config.json
 
       # ============================================================
-      # VERIFY UXC CONFIG
+      # VALIDATE UXC CONFIG
       # ============================================================
 
       - name: Validate UXC config
@@ -178,7 +180,7 @@ jobs:
             >/dev/null
 
       # ============================================================
-      # VERIFY ROOTFS
+      # VALIDATE ROOTFS
       # ============================================================
 
       - name: Validate rootfs
@@ -186,28 +188,23 @@ jobs:
           set -eux
 
           test -f build/rootfs/entrypoint.sh
-
-          test -x \
-            build/rootfs/entrypoint.sh
-
-          test -x \
-            build/rootfs/usr/local/bin/python3
+          test -x build/rootfs/entrypoint.sh
+          test -x build/rootfs/usr/local/bin/python3
 
           test -d \
             build/rootfs/usr/local/lib/python3.14/site-packages/homeassistant
 
       # ============================================================
-      # DETERMINE ACTUAL INSTALLED VERSIONS
+      # DETERMINE INSTALLED VERSIONS
       # ============================================================
 
-      - name: Extract build versions
+      - name: Determine versions
         id: versions
         run: |
           set -eux
 
           PYTHON_VERSION="$(
             docker run --rm \
-              --platform "${PLATFORM}" \
               --entrypoint python3 \
               "${IMAGE_NAME}:latest" \
               -c 'import platform; print(platform.python_version())'
@@ -215,7 +212,6 @@ jobs:
 
           HA_VERSION="$(
             docker run --rm \
-              --platform "${PLATFORM}" \
               --entrypoint python3 \
               "${IMAGE_NAME}:latest" \
               -c 'import homeassistant; print(homeassistant.const.__version__)'
@@ -231,49 +227,52 @@ jobs:
       # GENERATE README
       # ============================================================
 
-      - name: Generate release README
+      - name: Generate README
         run: |
           set -eux
 
           cat > build/README.txt <<EOF
-          Home Assistant Core UXC
-          ========================
+Home Assistant Core UXC
+=======================
 
-          Home Assistant:
-          ${{ steps.versions.outputs.homeassistant }}
+Home Assistant:
+${{ steps.versions.outputs.homeassistant }}
 
-          Python:
-          ${{ steps.versions.outputs.python }}
+Python:
+${{ steps.versions.outputs.python }}
 
-          Architecture:
-          ARM64
+Architecture:
+ARM64
 
-          Platform:
-          linux/arm64
+Platform:
+linux/arm64
 
-          UXC memory limit:
-          512 MiB
+Build:
+Native ARM64 GitHub Actions runner
 
-          UXC memory reservation:
-          300 MiB
+Memory limit:
+512 MiB
 
-          UXC swap limit:
-          512 MiB
+Memory reservation:
+300 MiB
 
-          Home Assistant configuration:
-          /config
+Swap limit:
+512 MiB
 
-          HTTP:
-          8123
+Configuration:
+ /config
 
-          This bundle is intended for UXC on OpenWrt.
-          EOF
+HTTP:
+8123
+
+This bundle is intended for UXC on OpenWrt.
+EOF
 
       # ============================================================
-      # DISPLAY ROOTFS SIZE
+      # SHOW ROOTFS SIZE
       # ============================================================
 
-      - name: Show rootfs size
+      - name: Show sizes
         run: |
           set -eux
 
@@ -291,7 +290,7 @@ jobs:
             build/rootfs/usr/local/lib/python3.14/site-packages/homeassistant
 
       # ============================================================
-      # CREATE UXC BUNDLE
+      # CREATE UXC ARCHIVE
       # ============================================================
 
       - name: Create UXC bundle
@@ -329,19 +328,6 @@ jobs:
             > SHA256SUMS
 
       # ============================================================
-      # SHOW RELEASE FILES
-      # ============================================================
-
-      - name: Show release files
-        run: |
-          set -eux
-
-          ls -lah release
-
-          echo
-          cat release/SHA256SUMS
-
-      # ============================================================
       # UPLOAD ARTIFACT
       # ============================================================
 
@@ -350,7 +336,7 @@ jobs:
         with:
           name: homeassistant-uxc-arm64-${{ steps.versions.outputs.homeassistant }}
           path: |
-            release/homeassistant-uxc-arm64-*.tar.gz
+            release/*.tar.gz
             release/SHA256SUMS
           if-no-files-found: error
 
@@ -364,5 +350,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            release/homeassistant-uxc-arm64-*.tar.gz
+            release/*.tar.gz
             release/SHA256SUMS
