@@ -165,7 +165,7 @@ jobs:
 
           mkdir -p build
 
-          cp uxc/config.template.json \
+          cp config.json \
              build/config.json
 
       # ============================================================
