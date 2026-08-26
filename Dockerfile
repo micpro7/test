@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1
 
+# Latest Python 3.14 patch release.
+# Do NOT change this to python:latest because Home Assistant
+# currently requires Python 3.14.x.
 FROM python:3.14-slim-bookworm
 
 LABEL org.opencontainers.image.title="Home Assistant Core UXC" \
@@ -14,19 +17,21 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /config
 
+# Minimal runtime packages.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Always install the latest Home Assistant available for this
-# Python environment at build time.
+# Install the latest Home Assistant release available for
+# the Python 3.14 environment at build time.
 RUN python3 -m pip install \
         --no-cache-dir \
         --disable-pip-version-check \
         homeassistant
 
+# Container startup
 COPY entrypoint.sh /entrypoint.sh
 
 RUN chmod 0755 /entrypoint.sh && \
