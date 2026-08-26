@@ -1,0 +1,372 @@
+name: Build Home Assistant UXC ARM64
+
+on:
+  workflow_dispatch:
+
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  IMAGE_NAME: homeassistant-uxc
+  PLATFORM: linux/arm64
+
+jobs:
+  build:
+    name: Build ARM64 UXC
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      # ============================================================
+      # CHECKOUT
+      # ============================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ============================================================
+      # QEMU
+      #
+      # Required because the GitHub runner is x86_64 while the
+      # container is being built for ARM64.
+      # ============================================================
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      # ============================================================
+      # DOCKER BUILDX
+      # ============================================================
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ============================================================
+      # BUILD ARM64 IMAGE
+      # ============================================================
+
+      - name: Build Home Assistant ARM64 image
+        run: |
+          set -eux
+
+          docker buildx build \
+            --platform "${PLATFORM}" \
+            --tag "${IMAGE_NAME}:latest" \
+            --load \
+            .
+
+      # ============================================================
+      # VERIFY PYTHON
+      # ============================================================
+
+      - name: Verify Python
+        run: |
+          set -eux
+
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            "${IMAGE_NAME}:latest" \
+            python3 --version
+
+      # ============================================================
+      # VERIFY HOME ASSISTANT
+      # ============================================================
+
+      - name: Verify Home Assistant
+        run: |
+          set -eux
+
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            --entrypoint python3 \
+            "${IMAGE_NAME}:latest" \
+            -c 'import homeassistant; print("Home Assistant:", homeassistant.const.__version__)'
+
+      # ============================================================
+      # VERIFY ARCHITECTURE
+      # ============================================================
+
+      - name: Verify ARM64 architecture
+        run: |
+          set -eux
+
+          docker run --rm \
+            --platform "${PLATFORM}" \
+            --entrypoint python3 \
+            "${IMAGE_NAME}:latest" \
+            -c '
+          import platform
+          import homeassistant
+
+          print("Architecture:", platform.machine())
+          print("Python:", platform.python_version())
+          print("Home Assistant:", homeassistant.const.__version__)
+
+          assert platform.machine() == "aarch64"
+          '
+
+      # ============================================================
+      # CREATE TEMPORARY CONTAINER
+      # ============================================================
+
+      - name: Create temporary container
+        id: container
+        run: |
+          set -eux
+
+          CID="$(docker create \
+            --platform "${PLATFORM}" \
+            "${IMAGE_NAME}:latest")"
+
+          echo "container_id=${CID}" >> "${GITHUB_OUTPUT}"
+
+      # ============================================================
+      # EXPORT FLAT ROOTFS
+      #
+      # docker export removes Docker image layers and produces
+      # the filesystem that will become the UXC rootfs.
+      # ============================================================
+
+      - name: Create UXC rootfs
+        run: |
+          set -eux
+
+          mkdir -p build/rootfs
+
+          docker export \
+            "${{ steps.container.outputs.container_id }}" \
+            | tar -xpf - \
+                -C build/rootfs
+
+      # ============================================================
+      # REMOVE TEMPORARY CONTAINER
+      # ============================================================
+
+      - name: Remove temporary container
+        if: always()
+        run: |
+          docker rm -f \
+            "${{ steps.container.outputs.container_id }}" \
+            2>/dev/null || true
+
+      # ============================================================
+      # COPY UXC CONFIG
+      # ============================================================
+
+      - name: Install UXC config
+        run: |
+          set -eux
+
+          mkdir -p build
+
+          cp config.json \
+             build/config.json
+
+      # ============================================================
+      # VALIDATE CONFIG
+      # ============================================================
+
+      - name: Validate UXC config
+        run: |
+          set -eux
+
+          python3 -m json.tool \
+            build/config.json \
+            >/dev/null
+
+      # ============================================================
+      # VALIDATE ROOTFS
+      # ============================================================
+
+      - name: Validate rootfs
+        run: |
+          set -eux
+
+          test -f build/rootfs/entrypoint.sh
+          test -x build/rootfs/entrypoint.sh
+
+          test -x \
+            build/rootfs/usr/local/bin/python3
+
+          test -d \
+            build/rootfs/usr/local/lib/python3.14/site-packages/homeassistant
+
+      # ============================================================
+      # GET ACTUAL VERSIONS
+      # ============================================================
+
+      - name: Determine installed versions
+        id: versions
+        run: |
+          set -eux
+
+          PYTHON_VERSION="$(
+            docker run --rm \
+              --platform "${PLATFORM}" \
+              --entrypoint python3 \
+              "${IMAGE_NAME}:latest" \
+              -c 'import platform; print(platform.python_version())'
+          )"
+
+          HA_VERSION="$(
+            docker run --rm \
+              --platform "${PLATFORM}" \
+              --entrypoint python3 \
+              "${IMAGE_NAME}:latest" \
+              -c 'import homeassistant; print(homeassistant.const.__version__)'
+          )"
+
+          echo "python=${PYTHON_VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "homeassistant=${HA_VERSION}" >> "${GITHUB_OUTPUT}"
+
+          echo "Python: ${PYTHON_VERSION}"
+          echo "Home Assistant: ${HA_VERSION}"
+
+      # ============================================================
+      # GENERATE README
+      # ============================================================
+
+      - name: Generate README
+        run: |
+          set -eux
+
+          cat > build/README.txt <<EOF
+Home Assistant Core UXC
+=======================
+
+Home Assistant:
+${{ steps.versions.outputs.homeassistant }}
+
+Python:
+${{ steps.versions.outputs.python }}
+
+Architecture:
+ARM64
+
+Platform:
+linux/arm64
+
+Build:
+Docker Buildx + QEMU
+
+Memory limit:
+512 MiB
+
+Memory reservation:
+300 MiB
+
+Swap limit:
+512 MiB
+
+Configuration:
+ /config
+
+HTTP:
+8123
+
+This bundle is intended for UXC on OpenWrt.
+EOF
+
+      # ============================================================
+      # SHOW SIZE
+      # ============================================================
+
+      - name: Show rootfs size
+        run: |
+          set -eux
+
+          echo "Total rootfs:"
+          du -sh build/rootfs
+
+          echo
+          echo "Python:"
+          du -sh \
+            build/rootfs/usr/local/lib/python3.14
+
+          echo
+          echo "Home Assistant:"
+          du -sh \
+            build/rootfs/usr/local/lib/python3.14/site-packages/homeassistant
+
+      # ============================================================
+      # CREATE UXC BUNDLE
+      # ============================================================
+
+      - name: Create UXC bundle
+        run: |
+          set -eux
+
+          mkdir -p release
+
+          VERSION="${{ steps.versions.outputs.homeassistant }}"
+
+          tar \
+            --sort=name \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -czf \
+            "release/homeassistant-uxc-arm64-${VERSION}.tar.gz" \
+            -C build \
+            rootfs \
+            config.json \
+            README.txt
+
+      # ============================================================
+      # SHA256
+      # ============================================================
+
+      - name: Generate SHA256
+        run: |
+          set -eux
+
+          cd release
+
+          sha256sum \
+            homeassistant-uxc-arm64-*.tar.gz \
+            > SHA256SUMS
+
+      # ============================================================
+      # SHOW RELEASE
+      # ============================================================
+
+      - name: Show release files
+        run: |
+          set -eux
+
+          ls -lah release
+
+          echo
+          cat release/SHA256SUMS
+
+      # ============================================================
+      # UPLOAD ARTIFACT
+      # ============================================================
+
+      - name: Upload UXC bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeassistant-uxc-arm64-${{ steps.versions.outputs.homeassistant }}
+          path: |
+            release/*.tar.gz
+            release/SHA256SUMS
+          if-no-files-found: error
+
+      # ============================================================
+      # GITHUB RELEASE
+      # ============================================================
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/SHA256SUMS
