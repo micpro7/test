@@ -1,0 +1,101 @@
+{
+  "ociVersion": "1.0.2-dev",
+  "process": {
+    "terminal": false,
+    "user": {
+      "uid": 0,
+      "gid": 0
+    },
+    "args": [
+      "/entrypoint.sh"
+    ],
+    "env": [
+      "PATH=/usr/local/bin:/usr/bin:/bin",
+      "TZ=Europe/London",
+      "PYTHONUNBUFFERED=1",
+      "PYTHONDONTWRITEBYTECODE=1",
+      "HOMEASSISTANT_DOCKER=1"
+    ],
+    "cwd": "/"
+  },
+  "root": {
+    "path": "rootfs",
+    "readonly": false
+  },
+  "mounts": [
+    {
+      "destination": "/proc",
+      "type": "proc",
+      "source": "proc"
+    },
+    {
+      "destination": "/dev",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "strictatime",
+        "mode=755",
+        "size=65536k"
+      ]
+    },
+    {
+      "destination": "/dev/pts",
+      "type": "devpts",
+      "source": "devpts",
+      "options": [
+        "nosuid",
+        "noexec",
+        "newinstance",
+        "ptmxmode=0666",
+        "mode=620"
+      ]
+    },
+    {
+      "destination": "/sys",
+      "type": "sysfs",
+      "source": "sysfs",
+      "options": [
+        "nosuid",
+        "noexec",
+        "nodev",
+        "ro"
+      ]
+    },
+    {
+      "destination": "/tmp",
+      "type": "tmpfs",
+      "source": "tmpfs",
+      "options": [
+        "nosuid",
+        "nodev",
+        "mode=1777"
+      ]
+    }
+  ],
+  "linux": {
+    "resources": {
+      "memory": {
+        "limit": 536870912,
+        "reservation": 314572800
+      }
+    },
+    "namespaces": [
+      {
+        "type": "pid"
+      },
+      {
+        "type": "network"
+      },
+      {
+        "type": "ipc"
+      },
+      {
+        "type": "uts"
+      },
+      {
+        "type": "mount"
+      }
+    ]
+  }
+}
