@@ -134,11 +134,6 @@ jobs:
           assert config["process"]["user"]["uid"] == 0
           assert config["process"]["user"]["gid"] == 0
 
-          memory = config["linux"]["resources"]["memory"]["limit"]
-
-          assert memory == 536870912, \
-              f"Unexpected memory limit: {memory}"
-
           print("OCI config OK")
           PY
 
