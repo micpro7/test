@@ -46,7 +46,6 @@ RUN apt-get update \
     dbus \
     sudo \
     bash \
-    tini \
  && rm -rf /var/lib/apt/lists/*
 
 # ==========================================================
@@ -136,12 +135,15 @@ RUN mkdir -p \
 # ==========================================================
 # Runtime entrypoint
 #
-# Tini = PID 1
-# Home Assistant = child process
+# UXC launches this script directly.
 #
-# No artificial restart loop is required here.
-# UXC/container supervision should restart the container if
-# Home Assistant terminates.
+# IMPORTANT:
+# Do NOT use /usr/bin/tini here.
+# The Debian Trixie tini binary is not compatible with the
+# OpenWrt UXC execution environment in this deployment.
+#
+# Home Assistant is executed with "exec", making it the
+# container's main process.
 # ==========================================================
 RUN cat > /usr/local/bin/homeassistant-entrypoint.sh <<'EOF'
 #!/bin/sh
@@ -190,12 +192,14 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 # Home Assistant is installed inside /opt/homeassistant.
 # Therefore validation uses that Python interpreter rather
 # than Debian's /usr/bin/python3.
+#
+# Tini is intentionally NOT validated because it is no
+# longer part of the UXC runtime.
 # ==========================================================
 RUN set -eux; \
     test -x /opt/homeassistant/bin/python; \
     test -x /opt/homeassistant/bin/pip; \
     test -x /opt/homeassistant/bin/hass; \
-    test -x /usr/bin/tini; \
     test -x /usr/bin/python3; \
     test -x /usr/bin/bash; \
     test -x /usr/bin/ffmpeg; \
@@ -226,7 +230,8 @@ EXPOSE 8123
 # Docker runtime default
 #
 # UXC uses config.json instead.
+#
+# This is deliberately the Home Assistant entrypoint rather
+# than Tini.
 # ==========================================================
-ENTRYPOINT ["/usr/bin/tini", "-g", "--"]
-
-CMD ["/usr/local/bin/homeassistant-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/homeassistant-entrypoint.sh"]
