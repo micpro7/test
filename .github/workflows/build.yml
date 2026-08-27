@@ -67,6 +67,8 @@ jobs:
 
           test -s rootfs.tar
 
+          echo "Docker rootfs exported successfully."
+
       # ==========================================================
       # STEP 2: Assemble UXC bundle
       # ==========================================================
@@ -103,7 +105,9 @@ jobs:
           # ========================================================
           # Validate OCI configuration
           # ========================================================
-          python3 -m json.tool bundle/config.json > /dev/null
+          python3 -m json.tool \
+            bundle/config.json \
+            > /dev/null
 
           python3 - <<'PY'
           import json
@@ -124,12 +128,15 @@ jobs:
 
           args = config["process"]["args"]
 
-          assert args == [
+          expected_args = [
               "/usr/bin/tini",
               "-g",
               "--",
               "/usr/local/bin/homeassistant-entrypoint.sh"
-          ], f"Unexpected process args: {args}"
+          ]
+
+          assert args == expected_args, \
+              f"Unexpected process args: {args}"
 
           assert config["process"]["user"]["uid"] == 0
           assert config["process"]["user"]["gid"] == 0
@@ -140,36 +147,111 @@ jobs:
           # ========================================================
           # Validate Debian Trixie
           # ========================================================
-          test -f bundle/rootfs/etc/os-release
+          test -f \
+            bundle/rootfs/etc/os-release
 
           grep -q "Debian" \
             bundle/rootfs/etc/os-release
 
-          grep -q "trixie" \
+          grep -qi "trixie" \
             bundle/rootfs/etc/os-release
 
-          # ========================================================
-          # Validate Python
-          # ========================================================
-          test -x bundle/rootfs/opt/homeassistant/bin/python
-          test -x bundle/rootfs/opt/homeassistant/bin/python3
+          echo "Debian Trixie validation OK"
 
           # ========================================================
-          # Validate Home Assistant
+          # Validate Home Assistant virtual environment
           # ========================================================
-          test -x bundle/rootfs/opt/homeassistant/bin/hass
-
           test -d \
-            bundle/rootfs/opt/homeassistant/lib/python3.*/site-packages/homeassistant
+            bundle/rootfs/opt/homeassistant
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/python
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/python3
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/pip
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/hass
+
+          echo "Home Assistant virtual environment OK"
+
+          # ========================================================
+          # Locate Home Assistant Python package
+          # ========================================================
+          HA_PACKAGE_DIR=$(
+            find \
+              bundle/rootfs/opt/homeassistant/lib \
+              -type d \
+              -path '*/site-packages/homeassistant' \
+              -print \
+              -quit
+          )
+
+          test -n "$HA_PACKAGE_DIR"
+          test -d "$HA_PACKAGE_DIR"
+
+          echo "Home Assistant package:"
+          echo "$HA_PACKAGE_DIR"
+
+          # ========================================================
+          # Locate Home Assistant distribution metadata
+          # ========================================================
+          HA_METADATA=$(
+            find \
+              bundle/rootfs/opt/homeassistant/lib \
+              -type f \
+              -path '*/site-packages/homeassistant-*.dist-info/METADATA' \
+              -print \
+              -quit
+          )
+
+          test -n "$HA_METADATA"
+          test -f "$HA_METADATA"
+
+          echo "Home Assistant metadata:"
+          echo "$HA_METADATA"
+
+          # ========================================================
+          # Validate Home Assistant metadata
+          # ========================================================
+          grep -q '^Name: Home Assistant$' \
+            "$HA_METADATA"
+
+          grep -q '^Version: ' \
+            "$HA_METADATA"
+
+          HA_VERSION_FROM_METADATA=$(
+            sed -n \
+              's/^Version: //p' \
+              "$HA_METADATA" \
+              | head -n 1
+          )
+
+          test -n "$HA_VERSION_FROM_METADATA"
+
+          echo "Home Assistant version:"
+          echo "$HA_VERSION_FROM_METADATA"
 
           # ========================================================
           # Validate runtime dependencies
           # ========================================================
-          test -x bundle/rootfs/usr/bin/tini
-          test -x bundle/rootfs/usr/bin/python3
-          test -x bundle/rootfs/usr/bin/bash
-          test -x bundle/rootfs/usr/bin/ffmpeg
-          test -x bundle/rootfs/usr/bin/sudo
+          test -x \
+            bundle/rootfs/usr/bin/tini
+
+          test -x \
+            bundle/rootfs/usr/bin/python3
+
+          test -x \
+            bundle/rootfs/usr/bin/bash
+
+          test -x \
+            bundle/rootfs/usr/bin/ffmpeg
+
+          test -x \
+            bundle/rootfs/usr/bin/sudo
 
           # ========================================================
           # Validate custom Home Assistant entrypoint
@@ -180,16 +262,25 @@ jobs:
           # ========================================================
           # Validate persistent directories
           # ========================================================
-          test -d bundle/rootfs/config
-          test -d bundle/rootfs/config/.storage
-          test -d bundle/rootfs/config/tmp
-          test -d bundle/rootfs/config/backup
+          test -d \
+            bundle/rootfs/config
+
+          test -d \
+            bundle/rootfs/config/.storage
+
+          test -d \
+            bundle/rootfs/config/tmp
+
+          test -d \
+            bundle/rootfs/config/backup
 
           # ========================================================
           # Validate ARM64 glibc
           # ========================================================
           test -e \
             bundle/rootfs/lib/aarch64-linux-gnu/libc.so.6
+
+          echo "ARM64 glibc validation OK"
 
           # ========================================================
           # Validate required OCI mount definitions
@@ -247,6 +338,8 @@ jobs:
             -czf homeassistant-arm64.tar.gz \
             -C bundle .
 
+          test -s homeassistant-arm64.tar.gz
+
       # ==========================================================
       # STEP 3: Sanity check bundle
       # ==========================================================
@@ -254,27 +347,63 @@ jobs:
         run: |
           set -eux
 
-          test -s homeassistant-arm64.tar.gz
+          test -s \
+            homeassistant-arm64.tar.gz
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify OCI configuration exists
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "^./config.json$"
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify Home Assistant Python
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "rootfs/opt/homeassistant/bin/python"
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify Home Assistant executable
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "rootfs/opt/homeassistant/bin/hass"
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify Home Assistant package
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/opt/homeassistant/lib/"
+
+          # ========================================================
+          # Verify entrypoint
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "rootfs/usr/local/bin/homeassistant-entrypoint.sh"
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify Tini
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "rootfs/usr/bin/tini"
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify FFmpeg
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "rootfs/usr/bin/ffmpeg"
 
-          tar -tzf homeassistant-arm64.tar.gz \
+          # ========================================================
+          # Verify Debian
+          # ========================================================
+          tar -tzf \
+            homeassistant-arm64.tar.gz \
             | grep -q "rootfs/etc/os-release"
 
           echo "=========================================="
@@ -284,6 +413,8 @@ jobs:
           echo "Bundle size:"
           du -h homeassistant-arm64.tar.gz
 
+          echo "=========================================="
+          echo "Sanity check PASSED"
           echo "=========================================="
 
       # ==========================================================
@@ -297,19 +428,54 @@ jobs:
 
           # ========================================================
           # Home Assistant version
+          #
+          # IMPORTANT:
+          # Do NOT execute the Python interpreter from the
+          # flattened rootfs here.
+          #
+          # The virtual environment has been exported from
+          # Docker and is being inspected outside its original
+          # filesystem environment.
+          #
+          # Read the installed pip distribution metadata instead.
           # ========================================================
-          HA_VER=$(
-            bundle/rootfs/opt/homeassistant/bin/python \
-              -c "import homeassistant; print(homeassistant.const.__version__)"
+          HA_METADATA=$(
+            find \
+              bundle/rootfs/opt/homeassistant/lib \
+              -type f \
+              -path '*/site-packages/homeassistant-*.dist-info/METADATA' \
+              -print \
+              -quit
           )
+
+          test -n "$HA_METADATA"
+          test -f "$HA_METADATA"
+
+          HA_VER=$(
+            sed -n \
+              's/^Version: //p' \
+              "$HA_METADATA" \
+              | head -n 1
+          )
+
+          test -n "$HA_VER"
+
+          echo "Home Assistant version: ${HA_VER}"
 
           # ========================================================
           # Python version
+          #
+          # Read the virtual environment Python version without
+          # importing Home Assistant.
           # ========================================================
           PY_VER=$(
             bundle/rootfs/opt/homeassistant/bin/python \
               --version 2>&1
           )
+
+          test -n "$PY_VER"
+
+          echo "Python version: ${PY_VER}"
 
           # ========================================================
           # Debian version
@@ -321,12 +487,16 @@ jobs:
               | tr -d '"'
           )
 
+          test -n "$DEBIAN_VERSION"
+
           OS_VERSION="Debian ${DEBIAN_VERSION} Trixie Slim"
 
           # ========================================================
           # Architecture
           # ========================================================
           ARCH=$(uname -m)
+
+          test "$ARCH" = "aarch64"
 
           # ========================================================
           # Release metadata
@@ -337,6 +507,17 @@ jobs:
           echo "PYTHON_VERSION=${PY_VER}" >> "$GITHUB_ENV"
           echo "OS_VERSION=${OS_VERSION}" >> "$GITHUB_ENV"
           echo "ARCH=${ARCH}" >> "$GITHUB_ENV"
+
+          echo "=========================================="
+          echo "Release metadata"
+          echo "=========================================="
+          echo "Release:       Home Assistant V${HA_VER}-${CURRENT_DATE}"
+          echo "Home Assistant: ${HA_VER}"
+          echo "Python:         ${PY_VER}"
+          echo "OS:             ${OS_VERSION}"
+          echo "Architecture:  ${ARCH}"
+          echo "Commit:        ${GITHUB_SHA::7}"
+          echo "=========================================="
 
       # ==========================================================
       # STEP 5: Publish release
@@ -349,7 +530,8 @@ jobs:
           make_latest: true
           fail_on_unmatched_files: true
 
-          files: homeassistant-arm64.tar.gz
+          files: |
+            homeassistant-arm64.tar.gz
 
           body: |
             Home Assistant UXC Bundle
