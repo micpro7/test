@@ -1,372 +1,268 @@
-name: Build Home Assistant UXC ARM64
+name: Build Home Assistant UXC Bundle
 
 on:
   workflow_dispatch:
+    inputs:
+      homeassistant_version:
+        description: "Home Assistant version"
+        default: "stable"
+        required: false
+
+  schedule:
+    - cron: "0 6 * * 1"
 
   push:
-    tags:
-      - "v*"
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "config.json"
+      - ".github/workflows/build.yml"
 
 permissions:
   contents: write
 
-env:
-  IMAGE_NAME: homeassistant-uxc
-  PLATFORM: linux/arm64
+concurrency:
+  group: build-release
+  cancel-in-progress: true
 
 jobs:
   build:
-    name: Build ARM64 UXC
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
 
     steps:
 
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
+      # ==========================================================
+      # Checkout repository
+      # ==========================================================
+      - name: Checkout repo
+        uses: actions/checkout@v5
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # ==========================================================
+      # Setup Docker Buildx
+      # ==========================================================
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v4
 
-      # ============================================================
-      # QEMU
-      #
-      # Required because the GitHub runner is x86_64 while the
-      # container is being built for ARM64.
-      # ============================================================
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      # ============================================================
-      # DOCKER BUILDX
-      # ============================================================
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # ============================================================
-      # BUILD ARM64 IMAGE
-      # ============================================================
-
-      - name: Build Home Assistant ARM64 image
+      # ==========================================================
+      # STEP 1: Build native ARM64 image
+      # ==========================================================
+      - name: Build rootfs (Docker)
         run: |
           set -eux
 
           docker buildx build \
-            --platform "${PLATFORM}" \
-            --tag "${IMAGE_NAME}:latest" \
+            --platform linux/arm64 \
+            --tag homeassistant-uxc:build \
+            --build-arg HOMEASSISTANT_VERSION="${{ inputs.homeassistant_version || 'stable' }}" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
             --load \
             .
 
-      # ============================================================
-      # VERIFY PYTHON
-      # ============================================================
+          CONTAINER_ID="$(docker create homeassistant-uxc:build)"
 
-      - name: Verify Python
+          docker export "$CONTAINER_ID" > rootfs.tar
+
+          docker rm "$CONTAINER_ID"
+
+          test -s rootfs.tar
+
+      # ==========================================================
+      # STEP 2: Assemble UXC bundle
+      # ==========================================================
+      - name: Assemble bundle
         run: |
           set -eux
 
-          docker run --rm \
-            --platform "${PLATFORM}" \
-            "${IMAGE_NAME}:latest" \
-            python3 --version
+          mkdir -p bundle/rootfs
 
-      # ============================================================
-      # VERIFY HOME ASSISTANT
-      # ============================================================
-
-      - name: Verify Home Assistant
-        run: |
-          set -eux
-
-          docker run --rm \
-            --platform "${PLATFORM}" \
-            --entrypoint python3 \
-            "${IMAGE_NAME}:latest" \
-            -c 'import homeassistant; print("Home Assistant:", homeassistant.const.__version__)'
-
-      # ============================================================
-      # VERIFY ARCHITECTURE
-      # ============================================================
-
-      - name: Verify ARM64 architecture
-        run: |
-          set -eux
-
-          docker run --rm \
-            --platform "${PLATFORM}" \
-            --entrypoint python3 \
-            "${IMAGE_NAME}:latest" \
-            -c '
-          import platform
-          import homeassistant
-
-          print("Architecture:", platform.machine())
-          print("Python:", platform.python_version())
-          print("Home Assistant:", homeassistant.const.__version__)
-
-          assert platform.machine() == "aarch64"
-          '
-
-      # ============================================================
-      # CREATE TEMPORARY CONTAINER
-      # ============================================================
-
-      - name: Create temporary container
-        id: container
-        run: |
-          set -eux
-
-          CID="$(docker create \
-            --platform "${PLATFORM}" \
-            "${IMAGE_NAME}:latest")"
-
-          echo "container_id=${CID}" >> "${GITHUB_OUTPUT}"
-
-      # ============================================================
-      # EXPORT FLAT ROOTFS
-      #
-      # docker export removes Docker image layers and produces
-      # the filesystem that will become the UXC rootfs.
-      # ============================================================
-
-      - name: Create UXC rootfs
-        run: |
-          set -eux
-
-          mkdir -p build/rootfs
-
-          docker export \
-            "${{ steps.container.outputs.container_id }}" \
-            | tar -xpf - \
-                -C build/rootfs
-
-      # ============================================================
-      # REMOVE TEMPORARY CONTAINER
-      # ============================================================
-
-      - name: Remove temporary container
-        if: always()
-        run: |
-          docker rm -f \
-            "${{ steps.container.outputs.container_id }}" \
-            2>/dev/null || true
-
-      # ============================================================
-      # COPY UXC CONFIG
-      # ============================================================
-
-      - name: Install UXC config
-        run: |
-          set -eux
-
-          mkdir -p build
-
-          cp config.json \
-             build/config.json
-
-      # ============================================================
-      # VALIDATE CONFIG
-      # ============================================================
-
-      - name: Validate UXC config
-        run: |
-          set -eux
-
-          python3 -m json.tool \
-            build/config.json \
-            >/dev/null
-
-      # ============================================================
-      # VALIDATE ROOTFS
-      # ============================================================
-
-      - name: Validate rootfs
-        run: |
-          set -eux
-
-          test -f build/rootfs/entrypoint.sh
-          test -x build/rootfs/entrypoint.sh
-
-          test -x \
-            build/rootfs/usr/local/bin/python3
-
-          test -d \
-            build/rootfs/usr/local/lib/python3.14/site-packages/homeassistant
-
-      # ============================================================
-      # GET ACTUAL VERSIONS
-      # ============================================================
-
-      - name: Determine installed versions
-        id: versions
-        run: |
-          set -eux
-
-          PYTHON_VERSION="$(
-            docker run --rm \
-              --platform "${PLATFORM}" \
-              --entrypoint python3 \
-              "${IMAGE_NAME}:latest" \
-              -c 'import platform; print(platform.python_version())'
-          )"
-
-          HA_VERSION="$(
-            docker run --rm \
-              --platform "${PLATFORM}" \
-              --entrypoint python3 \
-              "${IMAGE_NAME}:latest" \
-              -c 'import homeassistant; print(homeassistant.const.__version__)'
-          )"
-
-          echo "python=${PYTHON_VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "homeassistant=${HA_VERSION}" >> "${GITHUB_OUTPUT}"
-
-          echo "Python: ${PYTHON_VERSION}"
-          echo "Home Assistant: ${HA_VERSION}"
-
-      # ============================================================
-      # GENERATE README
-      # ============================================================
-
-      - name: Generate README
-        run: |
-          set -eux
-
-          cat > build/README.txt <<EOF
-Home Assistant Core UXC
-=======================
-
-Home Assistant:
-${{ steps.versions.outputs.homeassistant }}
-
-Python:
-${{ steps.versions.outputs.python }}
-
-Architecture:
-ARM64
-
-Platform:
-linux/arm64
-
-Build:
-Docker Buildx + QEMU
-
-Memory limit:
-512 MiB
-
-Memory reservation:
-300 MiB
-
-Swap limit:
-512 MiB
-
-Configuration:
- /config
-
-HTTP:
-8123
-
-This bundle is intended for UXC on OpenWrt.
-EOF
-
-      # ============================================================
-      # SHOW SIZE
-      # ============================================================
-
-      - name: Show rootfs size
-        run: |
-          set -eux
-
-          echo "Total rootfs:"
-          du -sh build/rootfs
-
-          echo
-          echo "Python:"
-          du -sh \
-            build/rootfs/usr/local/lib/python3.14
-
-          echo
-          echo "Home Assistant:"
-          du -sh \
-            build/rootfs/usr/local/lib/python3.14/site-packages/homeassistant
-
-      # ============================================================
-      # CREATE UXC BUNDLE
-      # ============================================================
-
-      - name: Create UXC bundle
-        run: |
-          set -eux
-
-          mkdir -p release
-
-          VERSION="${{ steps.versions.outputs.homeassistant }}"
-
-          tar \
-            --sort=name \
+          tar -xpf rootfs.tar \
+            -C bundle/rootfs \
             --owner=0 \
             --group=0 \
             --numeric-owner \
-            -czf \
-            "release/homeassistant-uxc-arm64-${VERSION}.tar.gz" \
-            -C build \
-            rootfs \
-            config.json \
-            README.txt
+            --same-permissions
 
-      # ============================================================
-      # SHA256
-      # ============================================================
+          rm -f rootfs.tar
 
-      - name: Generate SHA256
+          # ========================================================
+          # Strip unnecessary Debian files
+          # ========================================================
+          rm -rf \
+            bundle/rootfs/usr/share/man \
+            bundle/rootfs/usr/share/doc \
+            bundle/rootfs/usr/share/info \
+            bundle/rootfs/var/cache/apt/* \
+            bundle/rootfs/tmp/*
+
+          # ========================================================
+          # Copy UXC OCI configuration
+          # ========================================================
+          cp ./config.json bundle/config.json
+
+          # ========================================================
+          # Validate OCI configuration
+          # ========================================================
+          python3 -m json.tool bundle/config.json > /dev/null
+
+          python3 - <<'PY'
+          import json
+
+          with open("bundle/config.json") as f:
+              config = json.load(f)
+
+          required = [
+              "ociVersion",
+              "process",
+              "root",
+              "mounts",
+              "linux"
+          ]
+
+          for key in required:
+              assert key in config, f"Missing OCI field: {key}"
+
+          args = config["process"]["args"]
+
+          assert args == [
+              "/usr/bin/tini",
+              "-g",
+              "--",
+              "/usr/local/bin/homeassistant-entrypoint.sh"
+          ], f"Unexpected process args: {args}"
+
+          assert config["process"]["user"]["uid"] == 0
+          assert config["process"]["user"]["gid"] == 0
+
+          memory = config["linux"]["resources"]["memory"]["limit"]
+
+          assert memory == 536870912, \
+              f"Unexpected memory limit: {memory}"
+
+          print("OCI config OK")
+          PY
+
+          # ========================================================
+          # Validate Debian Trixie
+          # ========================================================
+          test -f bundle/rootfs/etc/os-release
+
+          grep -q "Debian" \
+            bundle/rootfs/etc/os-release
+
+          grep -q "trixie" \
+            bundle/rootfs/etc/os-release
+
+          # ========================================================
+          # Validate Python
+          # ========================================================
+          test -x bundle/rootfs/opt/homeassistant/bin/python
+          test -x bundle/rootfs/opt/homeassistant/bin/python3
+
+          # ========================================================
+          # Validate Home Assistant
+          # ========================================================
+          test -x bundle/rootfs/opt/homeassistant/bin/hass
+
+          test -d \
+            bundle/rootfs/opt/homeassistant/lib/python3.*/site-packages/homeassistant
+
+          # ========================================================
+          # Validate runtime dependencies
+          # ========================================================
+          test -x bundle/rootfs/usr/bin/tini
+          test -x bundle/rootfs/usr/bin/python3
+          test -x bundle/rootfs/usr/bin/bash
+          test -x bundle/rootfs/usr/bin/ffmpeg
+          test -x bundle/rootfs/usr/bin/sudo
+
+          # ========================================================
+          # Validate custom Home Assistant entrypoint
+          # ========================================================
+          test -x \
+            bundle/rootfs/usr/local/bin/homeassistant-entrypoint.sh
+
+          # ========================================================
+          # Validate persistent directories
+          # ========================================================
+          test -d bundle/rootfs/config
+          test -d bundle/rootfs/config/.storage
+          test -d bundle/rootfs/config/tmp
+          test -d bundle/rootfs/config/backup
+
+          # ========================================================
+          # Validate ARM64 glibc
+          # ========================================================
+          test -e \
+            bundle/rootfs/lib/aarch64-linux-gnu/libc.so.6
+
+          # ========================================================
+          # Validate required OCI mount definitions
+          # ========================================================
+          python3 - <<'PY'
+          import json
+
+          with open("bundle/config.json") as f:
+              config = json.load(f)
+
+          mounts = {
+              m["destination"]: m
+              for m in config["mounts"]
+          }
+
+          required_mounts = [
+              "/proc",
+              "/dev",
+              "/dev/pts",
+              "/dev/shm",
+              "/tmp",
+              "/config",
+              "/etc/resolv.conf",
+              "/var/run/dbus",
+              "/var/run/avahi-daemon"
+          ]
+
+          for mount in required_mounts:
+              assert mount in mounts, \
+                  f"Missing mount: {mount}"
+
+          assert mounts["/config"]["type"] == "none"
+          assert mounts["/config"]["source"] != ""
+
+          assert mounts["/etc/resolv.conf"]["type"] == "none"
+          assert mounts["/etc/resolv.conf"]["source"] != ""
+
+          assert mounts["/var/run/dbus"]["type"] == "none"
+          assert mounts["/var/run/dbus"]["source"] != ""
+
+          assert mounts["/var/run/avahi-daemon"]["type"] == "none"
+          assert mounts["/var/run/avahi-daemon"]["source"] != ""
+
+          print("OCI mounts OK")
+          PY
+
+          # ========================================================
+          # Create final UXC bundle
+          # ========================================================
+          tar \
+            --numeric-owner \
+            --owner=0 \
+            --group=0 \
+            --same-permissions \
+            -czf homeassistant-arm64.tar.gz \
+            -C bundle .
+
+      # ==========================================================
+      # STEP 3: Sanity check bundle
+      # ==========================================================
+      - name: Sanity check bundle
         run: |
           set -eux
 
-          cd release
+          test -s homeassistant-arm64.tar.gz
 
-          sha256sum \
-            homeassistant-uxc-arm64-*.tar.gz \
-            > SHA256SUMS
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "^./config.json$"
 
-      # ============================================================
-      # SHOW RELEASE
-      # ============================================================
-
-      - name: Show release files
-        run: |
-          set -eux
-
-          ls -lah release
-
-          echo
-          cat release/SHA256SUMS
-
-      # ============================================================
-      # UPLOAD ARTIFACT
-      # ============================================================
-
-      - name: Upload UXC bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: homeassistant-uxc-arm64-${{ steps.versions.outputs.homeassistant }}
-          path: |
-            release/*.tar.gz
-            release/SHA256SUMS
-          if-no-files-found: error
-
-      # ============================================================
-      # GITHUB RELEASE
-      # ============================================================
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            release/*.tar.gz
-            release/SHA256SUMS
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/opt/homeassistant/bin
