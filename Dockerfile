@@ -54,8 +54,7 @@ RUN apt-get update \
 # Normal sudo expects setresuid/setresgid behaviour which
 # UXC does not necessarily provide.
 #
-# Home Assistant integrations/plugins which invoke sudo can
-# therefore use this direct-exec compatibility wrapper.
+# Replace sudo with a lightweight direct-execution wrapper.
 # ==========================================================
 RUN rm -f /usr/bin/sudo \
  && cat > /usr/bin/sudo <<'EOF'
@@ -95,7 +94,7 @@ RUN chmod 0755 /usr/bin/sudo
 # ==========================================================
 # Python virtual environment
 #
-# Keep Home Assistant isolated from Debian's system Python.
+# Keep Home Assistant isolated from Debian system Python.
 # ==========================================================
 RUN python3 -m venv /opt/homeassistant \
  && /opt/homeassistant/bin/python -m pip install --upgrade \
@@ -103,15 +102,30 @@ RUN python3 -m venv /opt/homeassistant \
       setuptools \
       wheel
 
+# ==========================================================
+# Runtime environment
+#
+# Memory optimisation:
+#
+# PYTHONMALLOC=malloc
+#   Uses the system malloc allocator instead of Python's
+#   default small-object allocator.
+#
+# MALLOC_ARENA_MAX=2
+#   Limits glibc malloc arenas and helps reduce retained
+#   allocator memory on a low-RAM system.
+# ==========================================================
 ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin \
     VIRTUAL_ENV=/opt/homeassistant \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONMALLOC=malloc \
+    MALLOC_ARENA_MAX=2
 
 # ==========================================================
 # Home Assistant
 #
-# "stable" resolves to the current stable release.
+# "stable" / "latest" resolves to the current stable release.
 # A specific version can be supplied through the workflow.
 # ==========================================================
 RUN set -eux; \
@@ -124,7 +138,7 @@ RUN set -eux; \
 # ==========================================================
 # Persistent Home Assistant directory
 #
-# The UXC /config mount replaces this directory at runtime.
+# UXC mounts the host persistent directory over /config.
 # ==========================================================
 RUN mkdir -p \
     /config \
@@ -133,17 +147,18 @@ RUN mkdir -p \
     /config/backup
 
 # ==========================================================
-# Runtime entrypoint
-#
-# UXC launches this script directly.
+# Home Assistant runtime entrypoint
 #
 # IMPORTANT:
-# Do NOT use /usr/bin/tini here.
-# The Debian Trixie tini binary is not compatible with the
-# OpenWrt UXC execution environment in this deployment.
+# Do NOT use Tini here.
 #
-# Home Assistant is executed with "exec", making it the
-# container's main process.
+# Debian Trixie Tini was found to be incompatible with the
+# OpenWrt UXC execution environment:
+#
+#   __isoc23_strtol: symbol not found
+#   __fprintf_chk: symbol not found
+#
+# Home Assistant therefore runs directly as the main process.
 # ==========================================================
 RUN cat > /usr/local/bin/homeassistant-entrypoint.sh <<'EOF'
 #!/bin/sh
@@ -169,6 +184,10 @@ echo "Home Assistant: $(/opt/homeassistant/bin/python -c 'from homeassistant.con
 
 echo "HA executable:  $(/opt/homeassistant/bin/hass --version 2>&1)"
 
+echo "Python malloc:  ${PYTHONMALLOC:-default}"
+
+echo "Malloc arenas:  ${MALLOC_ARENA_MAX:-default}"
+
 echo "UID:            $(id -u)"
 echo "GID:            $(id -g)"
 echo "Workdir:        $(pwd)"
@@ -186,18 +205,13 @@ EOF
 RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 
 # ==========================================================
-# HARD VALIDATION
+# Build validation
 #
-# IMPORTANT:
-# Home Assistant is installed inside /opt/homeassistant.
-# Therefore validation uses that Python interpreter rather
-# than Debian's /usr/bin/python3.
-#
-# Tini is intentionally NOT validated because it is no
-# longer part of the UXC runtime.
+# Tini intentionally NOT included.
 # ==========================================================
 RUN set -eux; \
     test -x /opt/homeassistant/bin/python; \
+    test -x /opt/homeassistant/bin/python3; \
     test -x /opt/homeassistant/bin/pip; \
     test -x /opt/homeassistant/bin/hass; \
     test -x /usr/bin/python3; \
@@ -211,27 +225,32 @@ RUN set -eux; \
     ffmpeg -version | head -n 1
 
 # ==========================================================
-# Runtime Environment
+# Final runtime environment
 # ==========================================================
 ENV HOME=/root \
     TZ=UTC \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONMALLOC=malloc \
+    MALLOC_ARENA_MAX=2 \
     TMPDIR=/config/tmp \
     TEMP=/config/tmp \
     TMP=/config/tmp \
     DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket
 
+# ==========================================================
+# Working directory
+# ==========================================================
 WORKDIR /config
 
+# ==========================================================
+# Home Assistant Web UI
+# ==========================================================
 EXPOSE 8123
 
 # ==========================================================
 # Docker runtime default
 #
-# UXC uses config.json instead.
-#
-# This is deliberately the Home Assistant entrypoint rather
-# than Tini.
+# UXC config.json uses this same entrypoint directly.
 # ==========================================================
 ENTRYPOINT ["/usr/local/bin/homeassistant-entrypoint.sh"]
