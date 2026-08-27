@@ -1,33 +1,120 @@
 {
-  "ociVersion": "1.0.2-dev",
+  "ociVersion": "1.0.2",
+  "hostname": "homeassistant",
+
+  "annotations": {
+    "org.opencontainers.image.source": "https://github.com/micpro7/openwrt-uxc-homeassistant"
+  },
+
   "process": {
     "terminal": false,
+
     "user": {
       "uid": 0,
       "gid": 0
     },
+
     "args": [
-      "/entrypoint.sh"
+      "/usr/bin/tini",
+      "-g",
+      "--",
+      "/usr/local/bin/homeassistant-entrypoint.sh"
     ],
+
     "env": [
-      "PATH=/usr/local/bin:/usr/bin:/bin",
-      "TZ=Europe/London",
+      "PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
+      "HOME=/root",
+      "TERM=xterm",
+      "TZ=UTC",
+
       "PYTHONUNBUFFERED=1",
       "PYTHONDONTWRITEBYTECODE=1",
-      "HOMEASSISTANT_DOCKER=1"
+
+      "VIRTUAL_ENV=/opt/homeassistant",
+
+      "TMPDIR=/config/tmp",
+      "TEMP=/config/tmp",
+      "TMP=/config/tmp",
+
+      "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/var/run/dbus/system_bus_socket"
     ],
-    "cwd": "/"
+
+    "cwd": "/config",
+
+    "capabilities": {
+      "bounding": [
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_NET_ADMIN",
+        "CAP_NET_BIND_SERVICE",
+        "CAP_NET_RAW",
+        "CAP_SYS_ADMIN"
+      ],
+
+      "effective": [
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_NET_ADMIN",
+        "CAP_NET_BIND_SERVICE",
+        "CAP_NET_RAW",
+        "CAP_SYS_ADMIN"
+      ],
+
+      "inheritable": [
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_NET_ADMIN",
+        "CAP_NET_BIND_SERVICE",
+        "CAP_NET_RAW",
+        "CAP_SYS_ADMIN"
+      ],
+
+      "permitted": [
+        "CAP_CHOWN",
+        "CAP_DAC_OVERRIDE",
+        "CAP_FOWNER",
+        "CAP_FSETID",
+        "CAP_KILL",
+        "CAP_NET_BIND_SERVICE",
+        "CAP_NET_RAW",
+        "CAP_SYS_ADMIN"
+      ],
+
+      "ambient": []
+    },
+
+    "rlimits": [
+      {
+        "type": "RLIMIT_NOFILE",
+        "hard": 65536,
+        "soft": 65536
+      }
+    ],
+
+    "noNewPrivileges": false
   },
+
   "root": {
     "path": "rootfs",
     "readonly": false
   },
+
   "mounts": [
     {
       "destination": "/proc",
       "type": "proc",
       "source": "proc"
     },
+
     {
       "destination": "/dev",
       "type": "tmpfs",
@@ -39,6 +126,7 @@
         "size=65536k"
       ]
     },
+
     {
       "destination": "/dev/pts",
       "type": "devpts",
@@ -48,20 +136,24 @@
         "noexec",
         "newinstance",
         "ptmxmode=0666",
-        "mode=620"
+        "mode=0620",
+        "gid=5"
       ]
     },
+
     {
-      "destination": "/sys",
-      "type": "sysfs",
-      "source": "sysfs",
+      "destination": "/dev/shm",
+      "type": "tmpfs",
+      "source": "tmpfs",
       "options": [
         "nosuid",
         "noexec",
         "nodev",
-        "ro"
+        "mode=1777",
+        "size=32m"
       ]
     },
+
     {
       "destination": "/tmp",
       "type": "tmpfs",
@@ -71,21 +163,59 @@
         "nodev",
         "mode=1777"
       ]
+    },
+
+    {
+      "destination": "/config",
+      "type": "none",
+      "source": "/mnt/usb/UXC/homeassistant/data",
+      "options": [
+        "rbind",
+        "rw"
+      ]
+    },
+
+    {
+      "destination": "/etc/resolv.conf",
+      "type": "none",
+      "source": "/mnt/usb/UXC/homeassistant/data/resolv.conf",
+      "options": [
+        "rbind",
+        "ro"
+      ]
+    },
+
+    {
+      "destination": "/var/run/dbus",
+      "type": "none",
+      "source": "/var/run/dbus",
+      "options": [
+        "rbind",
+        "rw"
+      ]
+    },
+
+    {
+      "destination": "/var/run/avahi-daemon",
+      "type": "none",
+      "source": "/var/run/avahi-daemon",
+      "options": [
+        "rbind",
+        "rw"
+      ]
     }
   ],
+
   "linux": {
     "resources": {
       "memory": {
-        "limit": 536870912,
-        "reservation": 314572800
+        "limit": 536870912
       }
     },
+
     "namespaces": [
       {
         "type": "pid"
-      },
-      {
-        "type": "network"
       },
       {
         "type": "ipc"
@@ -95,7 +225,29 @@
       },
       {
         "type": "mount"
+      },
+      {
+        "type": "cgroup"
       }
+    ],
+
+    "maskedPaths": [
+      "/proc/kcore",
+      "/proc/keys",
+      "/proc/latency_stats",
+      "/proc/timer_list",
+      "/proc/timer_stats",
+      "/proc/sched_debug",
+      "/sys/firmware"
+    ],
+
+    "readonlyPaths": [
+      "/proc/asound",
+      "/proc/bus",
+      "/proc/fs",
+      "/proc/irq",
+      "/proc/sys",
+      "/proc/sysrq-trigger"
     ]
   }
 }
