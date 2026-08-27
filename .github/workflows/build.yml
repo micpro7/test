@@ -265,4 +265,111 @@ jobs:
             | grep -q "^./config.json$"
 
           tar -tzf homeassistant-arm64.tar.gz \
-            | grep -q "rootfs/opt/homeassistant/bin
+            | grep -q "rootfs/opt/homeassistant/bin/python"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/opt/homeassistant/bin/hass"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/usr/local/bin/homeassistant-entrypoint.sh"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/usr/bin/tini"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/usr/bin/ffmpeg"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "rootfs/etc/os-release"
+
+          echo "=========================================="
+          echo "Home Assistant UXC bundle"
+          echo "=========================================="
+
+          echo "Bundle size:"
+          du -h homeassistant-arm64.tar.gz
+
+          echo "=========================================="
+
+      # ==========================================================
+      # STEP 4: Determine versions & metadata
+      # ==========================================================
+      - name: Determine Release Name & Metadata
+        run: |
+          set -eux
+
+          CURRENT_DATE=$(date +'%Y-%m-%d')
+
+          # ========================================================
+          # Home Assistant version
+          # ========================================================
+          HA_VER=$(
+            bundle/rootfs/opt/homeassistant/bin/python \
+              -c "import homeassistant; print(homeassistant.const.__version__)"
+          )
+
+          # ========================================================
+          # Python version
+          # ========================================================
+          PY_VER=$(
+            bundle/rootfs/opt/homeassistant/bin/python \
+              --version 2>&1
+          )
+
+          # ========================================================
+          # Debian version
+          # ========================================================
+          DEBIAN_VERSION=$(
+            grep '^VERSION_ID=' \
+              bundle/rootfs/etc/os-release \
+              | cut -d'=' -f2 \
+              | tr -d '"'
+          )
+
+          OS_VERSION="Debian ${DEBIAN_VERSION} Trixie Slim"
+
+          # ========================================================
+          # Architecture
+          # ========================================================
+          ARCH=$(uname -m)
+
+          # ========================================================
+          # Release metadata
+          # ========================================================
+          echo "RELEASE_NAME=Home Assistant V${HA_VER}-${CURRENT_DATE}" >> "$GITHUB_ENV"
+          echo "BUILD_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "HA_VERSION=${HA_VER}" >> "$GITHUB_ENV"
+          echo "PYTHON_VERSION=${PY_VER}" >> "$GITHUB_ENV"
+          echo "OS_VERSION=${OS_VERSION}" >> "$GITHUB_ENV"
+          echo "ARCH=${ARCH}" >> "$GITHUB_ENV"
+
+      # ==========================================================
+      # STEP 5: Publish release
+      # ==========================================================
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.RELEASE_NAME }}
+          tag_name: latest
+          make_latest: true
+          fail_on_unmatched_files: true
+
+          files: homeassistant-arm64.tar.gz
+
+          body: |
+            Home Assistant UXC Bundle
+
+            - Architecture: ARM64
+            - OS Base: ${{ env.OS_VERSION }}
+            - Python Runtime: ${{ env.PYTHON_VERSION }}
+            - Home Assistant: v${{ env.HA_VERSION }}
+            - Build Commit: ${{ env.BUILD_SHA }}
+            - Runtime: Native ARM64
+            - Container Runtime: UXC
+            - Init System: Tini
+            - User: root
+            - Web UI: Port 8123
+            - D-Bus: Host system bus
+            - Avahi: Host Avahi daemon
+            - FFmpeg: Included
+            - Persistent Config: /config
