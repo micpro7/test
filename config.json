@@ -15,9 +15,6 @@
     },
 
     "args": [
-      "/usr/bin/tini",
-      "-g",
-      "--",
       "/usr/local/bin/homeassistant-entrypoint.sh"
     ],
 
@@ -25,7 +22,7 @@
       "PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin",
       "HOME=/root",
       "TERM=xterm",
-      "TZ=UTC",
+      "TZ=Europe/London",
 
       "PYTHONUNBUFFERED=1",
       "PYTHONDONTWRITEBYTECODE=1",
@@ -84,6 +81,7 @@
         "CAP_FOWNER",
         "CAP_FSETID",
         "CAP_KILL",
+        "CAP_NET_ADMIN",
         "CAP_NET_BIND_SERVICE",
         "CAP_NET_RAW",
         "CAP_SYS_ADMIN"
@@ -168,7 +166,7 @@
     {
       "destination": "/config",
       "type": "none",
-      "source": "/mnt/usb/UXC/homeassistant/data",
+      "source": "/mnt/X6/UXC/homeassistant/data",
       "options": [
         "rbind",
         "rw"
@@ -178,7 +176,7 @@
     {
       "destination": "/etc/resolv.conf",
       "type": "none",
-      "source": "/mnt/usb/UXC/homeassistant/data/resolv.conf",
+      "source": "/mnt/X6/UXC/homeassistant/data/resolv.conf",
       "options": [
         "rbind",
         "ro"
