@@ -117,9 +117,9 @@ ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbi
 # ==========================================================
 RUN set -eux; \
     if [ "${HOMEASSISTANT_VERSION}" = "stable" ] || [ "${HOMEASSISTANT_VERSION}" = "latest" ]; then \
-        pip install --no-cache-dir homeassistant; \
+        /opt/homeassistant/bin/pip install --no-cache-dir homeassistant; \
     else \
-        pip install --no-cache-dir "homeassistant==${HOMEASSISTANT_VERSION}"; \
+        /opt/homeassistant/bin/pip install --no-cache-dir "homeassistant==${HOMEASSISTANT_VERSION}"; \
     fi
 
 # ==========================================================
@@ -160,12 +160,18 @@ mkdir -p \
 echo "========================================================"
 echo " Home Assistant UXC runtime"
 echo "========================================================"
-echo "Python:         $(python3 --version)"
-echo "Home Assistant: $(python3 -c 'import homeassistant; print(homeassistant.const.__version__)')"
+
+echo "Python:         $(/opt/homeassistant/bin/python --version 2>&1)"
+
+echo "Home Assistant: $(/opt/homeassistant/bin/python -c 'from homeassistant.const import __version__; print(__version__)')"
+
+echo "HA executable:  $(/opt/homeassistant/bin/hass --version 2>&1)"
+
 echo "UID:            $(id -u)"
 echo "GID:            $(id -g)"
 echo "Workdir:        $(pwd)"
 echo "Config:         /config"
+
 echo "========================================================"
 
 # ==========================================================
@@ -179,9 +185,15 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 
 # ==========================================================
 # HARD VALIDATION
+#
+# IMPORTANT:
+# Home Assistant is installed inside /opt/homeassistant.
+# Therefore validation uses that Python interpreter rather
+# than Debian's /usr/bin/python3.
 # ==========================================================
 RUN set -eux; \
     test -x /opt/homeassistant/bin/python; \
+    test -x /opt/homeassistant/bin/pip; \
     test -x /opt/homeassistant/bin/hass; \
     test -x /usr/bin/tini; \
     test -x /usr/bin/python3; \
@@ -189,8 +201,9 @@ RUN set -eux; \
     test -x /usr/bin/ffmpeg; \
     test -x /usr/bin/sudo; \
     test -x /usr/local/bin/homeassistant-entrypoint.sh; \
-    python3 --version; \
-    python3 -c "import homeassistant; print('Home Assistant OK:', homeassistant.const.__version__)"; \
+    /opt/homeassistant/bin/python --version; \
+    /opt/homeassistant/bin/python -c "from homeassistant.const import __version__; print('Home Assistant OK:', __version__)"; \
+    /opt/homeassistant/bin/hass --version; \
     ffmpeg -version | head -n 1
 
 # ==========================================================
