@@ -1,3 +1,35 @@
+name: Build Home Assistant UXC Bundle
+
+on:
+workflow_dispatch:
+inputs:
+homeassistant_version:
+description: "Home Assistant version"
+default: "stable"
+required: false
+
+schedule:
+- cron: "0 6 * * 1"
+
+push:
+branches: [main]
+paths:
+- "Dockerfile"
+- "config.json"
+- ".github/workflows/build.yml"
+
+permissions:
+contents: write
+
+concurrency:
+group: build-release
+cancel-in-progress: true
+
+jobs:
+build:
+runs-on: ubuntu-24.04-arm
+
+```
 steps:
 
   # ==========================================================
