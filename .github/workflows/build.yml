@@ -1,569 +1,568 @@
 name: Build Home Assistant UXC Bundle
 
 on:
-workflow_dispatch:
-inputs:
-homeassistant_version:
-description: "Home Assistant version"
-default: "stable"
-required: false
+  workflow_dispatch:
+    inputs:
+      homeassistant_version:
+        description: "Home Assistant version"
+        default: "stable"
+        required: false
 
-schedule:
-- cron: "0 6 * * 1"
+  schedule:
+    - cron: "0 6 * * 1"
 
-push:
-branches: [main]
-paths:
-- "Dockerfile"
-- "config.json"
-- ".github/workflows/build.yml"
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "config.json"
+      - ".github/workflows/build.yml"
 
 permissions:
-contents: write
+  contents: write
 
 concurrency:
-group: build-release
-cancel-in-progress: true
+  group: build-release
+  cancel-in-progress: true
 
 jobs:
-build:
-runs-on: ubuntu-24.04-arm
-
-steps:
-
-  # ==========================================================
-  # Checkout repository
-  # ==========================================================
-  - name: Checkout repo
-    uses: actions/checkout@v5
-
-  # ==========================================================
-  # Setup Docker Buildx
-  # ==========================================================
-  - name: Setup Buildx
-    uses: docker/setup-buildx-action@v4
-
-  # ==========================================================
-  # STEP 1: Build native ARM64 image
-  # ==========================================================
-  - name: Build rootfs (Docker)
-    run: |
-      set -eux
-
-      docker buildx build \
-        --platform linux/arm64 \
-        --tag homeassistant-uxc:build \
-        --build-arg HOMEASSISTANT_VERSION="${{ inputs.homeassistant_version || 'stable' }}" \
-        --cache-from type=gha \
-        --cache-to type=gha,mode=max \
-        --load \
-        .
-
-      CONTAINER_ID="$(docker create homeassistant-uxc:build)"
-
-      docker export "$CONTAINER_ID" > rootfs.tar
-
-      docker rm "$CONTAINER_ID"
-
-      test -s rootfs.tar
-
-      echo "=========================================="
-      echo "ARM64 rootfs created"
-      echo "=========================================="
-
-      du -h rootfs.tar
-
-  # ==========================================================
-  # STEP 2: Assemble UXC bundle
-  # ==========================================================
-  - name: Assemble bundle
-    run: |
-      set -eux
-
-      mkdir -p bundle/rootfs
-
-      tar -xpf rootfs.tar \
-        -C bundle/rootfs \
-        --owner=0 \
-        --group=0 \
-        --numeric-owner \
-        --same-permissions
-
-      rm -f rootfs.tar
-
-      # ========================================================
-      # Strip unnecessary Debian files
-      # ========================================================
-      rm -rf \
-        bundle/rootfs/usr/share/man \
-        bundle/rootfs/usr/share/doc \
-        bundle/rootfs/usr/share/info \
-        bundle/rootfs/var/cache/apt/* \
-        bundle/rootfs/tmp/*
-
-      # ========================================================
-      # Copy UXC OCI configuration
-      # ========================================================
-      cp ./config.json bundle/config.json
+  build:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+
+      # ==========================================================
+      # Checkout repository
+      # ==========================================================
+      - name: Checkout repo
+        uses: actions/checkout@v5
+
+      # ==========================================================
+      # Setup Docker Buildx
+      # ==========================================================
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # ==========================================================
+      # STEP 1: Build native ARM64 image
+      # ==========================================================
+      - name: Build rootfs (Docker)
+        run: |
+          set -eux
+
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag homeassistant-uxc:build \
+            --build-arg HOMEASSISTANT_VERSION="${{ inputs.homeassistant_version || 'stable' }}" \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --load \
+            .
+
+          CONTAINER_ID="$(docker create homeassistant-uxc:build)"
+
+          docker export "$CONTAINER_ID" > rootfs.tar
+
+          docker rm "$CONTAINER_ID"
+
+          test -s rootfs.tar
+
+          echo "=========================================="
+          echo "ARM64 rootfs created"
+          echo "=========================================="
+
+          du -h rootfs.tar
+
+      # ==========================================================
+      # STEP 2: Assemble UXC bundle
+      # ==========================================================
+      - name: Assemble bundle
+        run: |
+          set -eux
+
+          mkdir -p bundle/rootfs
+
+          tar -xpf rootfs.tar \
+            -C bundle/rootfs \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            --same-permissions
+
+          rm -f rootfs.tar
+
+          # ========================================================
+          # Strip unnecessary Debian files
+          # ========================================================
+          rm -rf \
+            bundle/rootfs/usr/share/man \
+            bundle/rootfs/usr/share/doc \
+            bundle/rootfs/usr/share/info \
+            bundle/rootfs/var/cache/apt/* \
+            bundle/rootfs/tmp/*
+
+          # ========================================================
+          # Copy UXC OCI configuration
+          # ========================================================
+          cp ./config.json bundle/config.json
 
-      # ========================================================
-      # Basic OCI JSON validation
-      # ========================================================
-      python3 -m json.tool \
-        bundle/config.json \
-        > /dev/null
-
-      python3 - <<'PY'
-      import json
-
-      with open("bundle/config.json") as f:
-          config = json.load(f)
-
-      required = [
-          "ociVersion",
-          "process",
-          "root",
-          "mounts",
-          "linux"
-      ]
-
-      for key in required:
-          assert key in config, f"Missing OCI field: {key}"
+          # ========================================================
+          # Basic OCI JSON validation
+          # ========================================================
+          python3 -m json.tool \
+            bundle/config.json \
+            > /dev/null
+
+          python3 - <<'PY'
+          import json
+
+          with open("bundle/config.json") as f:
+              config = json.load(f)
+
+          required = [
+              "ociVersion",
+              "process",
+              "root",
+              "mounts",
+              "linux"
+          ]
+
+          for key in required:
+              assert key in config, f"Missing OCI field: {key}"
 
-      args = config["process"]["args"]
+          args = config["process"]["args"]
 
-      expected_args = [
-          "/usr/local/bin/homeassistant-entrypoint.sh"
-      ]
+          expected_args = [
+              "/usr/local/bin/homeassistant-entrypoint.sh"
+          ]
 
-      assert args == expected_args, \
-          f"Unexpected process args: {args}"
+          assert args == expected_args, \
+              f"Unexpected process args: {args}"
 
-      assert config["process"]["user"]["uid"] == 0
-      assert config["process"]["user"]["gid"] == 0
+          assert config["process"]["user"]["uid"] == 0
+          assert config["process"]["user"]["gid"] == 0
 
-      assert config["root"]["path"] == "rootfs"
+          assert config["root"]["path"] == "rootfs"
 
-      assert config["process"]["noNewPrivileges"] is False
+          assert config["process"]["noNewPrivileges"] is False
 
-      print("OCI config OK")
-      PY
-
-      # ========================================================
-      # Validate Debian Trixie
-      # ========================================================
-      test -f \
-        bundle/rootfs/etc/os-release
-
-      grep -q "Debian" \
-        bundle/rootfs/etc/os-release
-
-      grep -qi "trixie" \
-        bundle/rootfs/etc/os-release
-
-      echo "Debian Trixie validation OK"
+          print("OCI config OK")
+          PY
+
+          # ========================================================
+          # Validate Debian Trixie
+          # ========================================================
+          test -f \
+            bundle/rootfs/etc/os-release
+
+          grep -q "Debian" \
+            bundle/rootfs/etc/os-release
+
+          grep -qi "trixie" \
+            bundle/rootfs/etc/os-release
+
+          echo "Debian Trixie validation OK"
 
-      # ========================================================
-      # Validate IPv4 preference
-      # ========================================================
-      test -f \
-        bundle/rootfs/etc/gai.conf
-
-      grep -Eq \
-        '^[[:space:]]*precedence[[:space:]]+::ffff:0:0/96[[:space:]]+100[[:space:]]*$' \
-        bundle/rootfs/etc/gai.conf
-
-      echo "IPv4 address-selection preference OK"
-
-      # ========================================================
-      # Validate network diagnostic tools
-      # ========================================================
-      test -x \
-        bundle/rootfs/usr/sbin/ip
-
-      echo "iproute2 validation OK"
-
-      # ========================================================
-      # Validate Home Assistant virtual environment
-      # ========================================================
-      test -d \
-        bundle/rootfs/opt/homeassistant
-
-      test -x \
-        bundle/rootfs/opt/homeassistant/bin/python
-
-      test -x \
-        bundle/rootfs/opt/homeassistant/bin/python3
-
-      test -x \
-        bundle/rootfs/opt/homeassistant/bin/pip
-
-      test -x \
-        bundle/rootfs/opt/homeassistant/bin/hass
-
-      echo "Home Assistant virtual environment OK"
-
-      # ========================================================
-      # Locate Home Assistant package
-      # ========================================================
-      HA_PACKAGE_DIR="$(
-        find \
-          bundle/rootfs/opt/homeassistant/lib \
-          -type d \
-          -path '*/site-packages/homeassistant' \
-          -print \
-          -quit
-      )"
-
-      test -n "$HA_PACKAGE_DIR"
-      test -d "$HA_PACKAGE_DIR"
-
-      echo "Home Assistant package:"
-      echo "$HA_PACKAGE_DIR"
-
-      # ========================================================
-      # Locate Home Assistant distribution metadata
-      # ========================================================
-      HA_METADATA="$(
-        find \
-          bundle/rootfs/opt/homeassistant/lib \
-          -type f \
-          -path '*/site-packages/homeassistant-*.dist-info/METADATA' \
-          -print \
-          -quit
-      )"
-
-      test -n "$HA_METADATA"
-      test -f "$HA_METADATA"
-
-      echo "Home Assistant metadata:"
-      echo "$HA_METADATA"
-
-      # ========================================================
-      # Read distribution name and version
-      # ========================================================
-      HA_NAME="$(
-        sed -n \
-          's/^Name: //p' \
-          "$HA_METADATA" \
-          | head -n 1
-      )"
-
-      HA_VERSION_FROM_METADATA="$(
-        sed -n \
-          's/^Version: //p' \
-          "$HA_METADATA" \
-          | head -n 1
-      )"
-
-      test -n "$HA_NAME"
-      test -n "$HA_VERSION_FROM_METADATA"
-
-      echo "Home Assistant distribution: $HA_NAME"
-      echo "Home Assistant version: $HA_VERSION_FROM_METADATA"
-
-      # ========================================================
-      # Ensure this is actually Home Assistant
-      # ========================================================
-      case "$HA_NAME" in
-        "Home Assistant"|"homeassistant"|"Home-Assistant")
-          ;;
-        *)
-          echo "ERROR: Unexpected Python distribution: $HA_NAME"
-          exit 1
-          ;;
-      esac
-
-      # ========================================================
-      # Validate runtime dependencies
-      # ========================================================
-      test -x \
-        bundle/rootfs/usr/bin/python3
-
-      test -x \
-        bundle/rootfs/usr/bin/bash
-
-      test -x \
-        bundle/rootfs/usr/bin/ffmpeg
-
-      test -x \
-        bundle/rootfs/usr/bin/sudo
-
-      test -x \
-        bundle/rootfs/usr/sbin/ip
-
-      echo "Runtime dependencies OK"
-
-      # ========================================================
-      # Validate custom Home Assistant entrypoint
-      # ========================================================
-      test -x \
-        bundle/rootfs/usr/local/bin/homeassistant-entrypoint.sh
-
-      echo "Home Assistant entrypoint OK"
-
-      # ========================================================
-      # Validate persistent directories
-      # ========================================================
-      test -d \
-        bundle/rootfs/config
-
-      test -d \
-        bundle/rootfs/config/.storage
-
-      test -d \
-        bundle/rootfs/config/tmp
-
-      test -d \
-        bundle/rootfs/config/backup
-
-      echo "Persistent directories OK"
-
-      # ========================================================
-      # Validate ARM64 glibc
-      # ========================================================
-      test -e \
-        bundle/rootfs/lib/aarch64-linux-gnu/libc.so.6
-
-      test -e \
-        bundle/rootfs/lib/ld-linux-aarch64.so.1
-
-      echo "ARM64 glibc validation OK"
-
-      # ========================================================
-      # Validate OCI mount definitions
-      # ========================================================
-      python3 - <<'PY'
-      import json
-
-      with open("bundle/config.json") as f:
-          config = json.load(f)
-
-      mounts = {
-          m["destination"]: m
-          for m in config["mounts"]
-      }
-
-      required_mounts = [
-          "/proc",
-          "/dev",
-          "/dev/pts",
-          "/dev/shm",
-          "/tmp",
-          "/config",
-          "/etc/resolv.conf",
-          "/var/run/dbus",
-          "/var/run/avahi-daemon"
-      ]
-
-      for mount in required_mounts:
-          assert mount in mounts, \
-              f"Missing mount: {mount}"
-
-      assert mounts["/config"]["type"] == "none"
-      assert mounts["/config"]["source"] != ""
-
-      assert mounts["/etc/resolv.conf"]["type"] == "none"
-      assert mounts["/etc/resolv.conf"]["source"] != ""
-
-      assert mounts["/var/run/dbus"]["type"] == "none"
-      assert mounts["/var/run/dbus"]["source"] != ""
-
-      assert mounts["/var/run/avahi-daemon"]["type"] == "none"
-      assert mounts["/var/run/avahi-daemon"]["source"] != ""
-
-      print("OCI mounts OK")
-      PY
-
-      # ========================================================
-      # Create final UXC bundle
-      # ========================================================
-      tar \
-        --numeric-owner \
-        --owner=0 \
-        --group=0 \
-        --same-permissions \
-        -czf homeassistant-arm64.tar.gz \
-        -C bundle .
-
-      test -s \
-        homeassistant-arm64.tar.gz
-
-      echo "=========================================="
-      echo "Final UXC bundle created"
-      echo "=========================================="
-
-      du -h homeassistant-arm64.tar.gz
-
-  # ==========================================================
-  # STEP 3: Sanity check bundle
-  # ==========================================================
-  - name: Sanity check bundle
-    run: |
-      set -eux
-
-      test -s \
-        homeassistant-arm64.tar.gz
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q "^./config.json$"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/opt/homeassistant/bin/python"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/opt/homeassistant/bin/hass"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/usr/local/bin/homeassistant-entrypoint.sh"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/usr/bin/ffmpeg"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/usr/sbin/ip"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/etc/gai.conf"
-
-      tar -tzf homeassistant-arm64.tar.gz \
-        | grep -q \
-          "rootfs/etc/os-release"
-
-      echo "=========================================="
-      echo "Home Assistant UXC bundle"
-      echo "=========================================="
-
-      echo "Bundle size:"
-      du -h homeassistant-arm64.tar.gz
-
-      echo "=========================================="
-
-  # ==========================================================
-  # STEP 4: Determine versions & metadata
-  # ==========================================================
-  - name: Determine Release Name & Metadata
-    run: |
-      set -eux
-
-      CURRENT_DATE="$(date +'%Y-%m-%d')"
-
-      # ========================================================
-      # Locate Home Assistant distribution metadata
-      # ========================================================
-      HA_METADATA="$(
-        find \
-          bundle/rootfs/opt/homeassistant/lib \
-          -type f \
-          -path '*/site-packages/homeassistant-*.dist-info/METADATA' \
-          -print \
-          -quit
-      )"
-
-      test -n "$HA_METADATA"
-      test -f "$HA_METADATA"
-
-      # ========================================================
-      # Read Home Assistant version
-      # ========================================================
-      HA_VER="$(
-        sed -n \
-          's/^Version: //p' \
-          "$HA_METADATA" \
-          | head -n 1
-      )"
-
-      test -n "$HA_VER"
-
-      # ========================================================
-      # Python version
-      # ========================================================
-      PY_VER="$(
-        bundle/rootfs/opt/homeassistant/bin/python \
-          --version 2>&1
-      )"
-
-      test -n "$PY_VER"
-
-      # ========================================================
-      # Debian version
-      # ========================================================
-      DEBIAN_VERSION="$(
-        grep '^VERSION_ID=' \
-          bundle/rootfs/etc/os-release \
-          | cut -d'=' -f2 \
-          | tr -d '"'
-      )"
-
-      test -n "$DEBIAN_VERSION"
-
-      OS_VERSION="Debian ${DEBIAN_VERSION} Trixie Slim"
-
-      # ========================================================
-      # Architecture
-      # ========================================================
-      ARCH="$(uname -m)"
-
-      # ========================================================
-      # Display metadata
-      # ========================================================
-      echo "=========================================="
-      echo "Build metadata"
-      echo "=========================================="
-      echo "Home Assistant: ${HA_VER}"
-      echo "Python:         ${PY_VER}"
-      echo "OS:             ${OS_VERSION}"
-      echo "Architecture:   ${ARCH}"
-      echo "Commit:         ${GITHUB_SHA::7}"
-      echo "=========================================="
-
-      # ========================================================
-      # Export GitHub Actions environment
-      # ========================================================
-      echo "RELEASE_NAME=Home Assistant V${HA_VER}-${CURRENT_DATE}" >> "$GITHUB_ENV"
-      echo "BUILD_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-      echo "HA_VERSION=${HA_VER}" >> "$GITHUB_ENV"
-      echo "PYTHON_VERSION=${PY_VER}" >> "$GITHUB_ENV"
-      echo "OS_VERSION=${OS_VERSION}" >> "$GITHUB_ENV"
-      echo "ARCH=${ARCH}" >> "$GITHUB_ENV"
-
-  # ==========================================================
-  # STEP 5: Publish release
-  # ==========================================================
-  - name: Publish release
-    uses: softprops/action-gh-release@v2
-    with:
-      name: ${{ env.RELEASE_NAME }}
-      tag_name: latest
-      make_latest: true
-      fail_on_unmatched_files: true
-
-      files: |
-        homeassistant-arm64.tar.gz
-
-      body: |
-        Home Assistant UXC Bundle
-
-        - Architecture: ARM64
-        - OS Base: ${{ env.OS_VERSION }}
-        - Python Runtime: ${{ env.PYTHON_VERSION }}
-        - Home Assistant: v${{ env.HA_VERSION }}
-        - Build Commit: ${{ env.BUILD_SHA }}
-        - Runtime: Native ARM64
-        - Container Runtime: UXC
-        - Init System: Home Assistant entrypoint
-        - User: root
-        - Web UI: Port 8123
-        - D-Bus: Host system bus
-        - Avahi: Host Avahi daemon
-        - FFmpeg: Included
-        - Persistent Config: /config
-        - IPv4 Preference: Enabled
-        - Persistent Config: /config
-        - Architecture: ${{ env.ARCH }}
+          # ========================================================
+          # Validate IPv4 preference
+          # ========================================================
+          test -f \
+            bundle/rootfs/etc/gai.conf
+
+          grep -Eq \
+            '^[[:space:]]*precedence[[:space:]]+::ffff:0:0/96[[:space:]]+100[[:space:]]*$' \
+            bundle/rootfs/etc/gai.conf
+
+          echo "IPv4 address-selection preference OK"
+
+          # ========================================================
+          # Validate network diagnostic tools
+          # ========================================================
+          test -x \
+            bundle/rootfs/usr/sbin/ip
+
+          echo "iproute2 validation OK"
+
+          # ========================================================
+          # Validate Home Assistant virtual environment
+          # ========================================================
+          test -d \
+            bundle/rootfs/opt/homeassistant
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/python
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/python3
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/pip
+
+          test -x \
+            bundle/rootfs/opt/homeassistant/bin/hass
+
+          echo "Home Assistant virtual environment OK"
+
+          # ========================================================
+          # Locate Home Assistant package
+          # ========================================================
+          HA_PACKAGE_DIR="$(
+            find \
+              bundle/rootfs/opt/homeassistant/lib \
+              -type d \
+              -path '*/site-packages/homeassistant' \
+              -print \
+              -quit
+          )"
+
+          test -n "$HA_PACKAGE_DIR"
+          test -d "$HA_PACKAGE_DIR"
+
+          echo "Home Assistant package:"
+          echo "$HA_PACKAGE_DIR"
+
+          # ========================================================
+          # Locate Home Assistant distribution metadata
+          # ========================================================
+          HA_METADATA="$(
+            find \
+              bundle/rootfs/opt/homeassistant/lib \
+              -type f \
+              -path '*/site-packages/homeassistant-*.dist-info/METADATA' \
+              -print \
+              -quit
+          )"
+
+          test -n "$HA_METADATA"
+          test -f "$HA_METADATA"
+
+          echo "Home Assistant metadata:"
+          echo "$HA_METADATA"
+
+          # ========================================================
+          # Read distribution name and version
+          # ========================================================
+          HA_NAME="$(
+            sed -n \
+              's/^Name: //p' \
+              "$HA_METADATA" \
+              | head -n 1
+          )"
+
+          HA_VERSION_FROM_METADATA="$(
+            sed -n \
+              's/^Version: //p' \
+              "$HA_METADATA" \
+              | head -n 1
+          )"
+
+          test -n "$HA_NAME"
+          test -n "$HA_VERSION_FROM_METADATA"
+
+          echo "Home Assistant distribution: $HA_NAME"
+          echo "Home Assistant version: $HA_VERSION_FROM_METADATA"
+
+          # ========================================================
+          # Ensure this is actually Home Assistant
+          # ========================================================
+          case "$HA_NAME" in
+            "Home Assistant"|"homeassistant"|"Home-Assistant")
+              ;;
+            *)
+              echo "ERROR: Unexpected Python distribution: $HA_NAME"
+              exit 1
+              ;;
+          esac
+
+          # ========================================================
+          # Validate runtime dependencies
+          # ========================================================
+          test -x \
+            bundle/rootfs/usr/bin/python3
+
+          test -x \
+            bundle/rootfs/usr/bin/bash
+
+          test -x \
+            bundle/rootfs/usr/bin/ffmpeg
+
+          test -x \
+            bundle/rootfs/usr/bin/sudo
+
+          test -x \
+            bundle/rootfs/usr/sbin/ip
+
+          echo "Runtime dependencies OK"
+
+          # ========================================================
+          # Validate custom Home Assistant entrypoint
+          # ========================================================
+          test -x \
+            bundle/rootfs/usr/local/bin/homeassistant-entrypoint.sh
+
+          echo "Home Assistant entrypoint OK"
+
+          # ========================================================
+          # Validate persistent directories
+          # ========================================================
+          test -d \
+            bundle/rootfs/config
+
+          test -d \
+            bundle/rootfs/config/.storage
+
+          test -d \
+            bundle/rootfs/config/tmp
+
+          test -d \
+            bundle/rootfs/config/backup
+
+          echo "Persistent directories OK"
+
+          # ========================================================
+          # Validate ARM64 glibc
+          # ========================================================
+          test -e \
+            bundle/rootfs/lib/aarch64-linux-gnu/libc.so.6
+
+          test -e \
+            bundle/rootfs/lib/ld-linux-aarch64.so.1
+
+          echo "ARM64 glibc validation OK"
+
+          # ========================================================
+          # Validate OCI mount definitions
+          # ========================================================
+          python3 - <<'PY'
+          import json
+
+          with open("bundle/config.json") as f:
+              config = json.load(f)
+
+          mounts = {
+              m["destination"]: m
+              for m in config["mounts"]
+          }
+
+          required_mounts = [
+              "/proc",
+              "/dev",
+              "/dev/pts",
+              "/dev/shm",
+              "/tmp",
+              "/config",
+              "/etc/resolv.conf",
+              "/var/run/dbus",
+              "/var/run/avahi-daemon"
+          ]
+
+          for mount in required_mounts:
+              assert mount in mounts, \
+                  f"Missing mount: {mount}"
+
+          assert mounts["/config"]["type"] == "none"
+          assert mounts["/config"]["source"] != ""
+
+          assert mounts["/etc/resolv.conf"]["type"] == "none"
+          assert mounts["/etc/resolv.conf"]["source"] != ""
+
+          assert mounts["/var/run/dbus"]["type"] == "none"
+          assert mounts["/var/run/dbus"]["source"] != ""
+
+          assert mounts["/var/run/avahi-daemon"]["type"] == "none"
+          assert mounts["/var/run/avahi-daemon"]["source"] != ""
+
+          print("OCI mounts OK")
+          PY
+
+          # ========================================================
+          # Create final UXC bundle
+          # ========================================================
+          tar \
+            --numeric-owner \
+            --owner=0 \
+            --group=0 \
+            --same-permissions \
+            -czf homeassistant-arm64.tar.gz \
+            -C bundle .
+
+          test -s \
+            homeassistant-arm64.tar.gz
+
+          echo "=========================================="
+          echo "Final UXC bundle created"
+          echo "=========================================="
+
+          du -h homeassistant-arm64.tar.gz
+
+      # ==========================================================
+      # STEP 3: Sanity check bundle
+      # ==========================================================
+      - name: Sanity check bundle
+        run: |
+          set -eux
+
+          test -s \
+            homeassistant-arm64.tar.gz
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q "^./config.json$"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/opt/homeassistant/bin/python"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/opt/homeassistant/bin/hass"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/usr/local/bin/homeassistant-entrypoint.sh"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/usr/bin/ffmpeg"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/usr/sbin/ip"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/etc/gai.conf"
+
+          tar -tzf homeassistant-arm64.tar.gz \
+            | grep -q \
+              "rootfs/etc/os-release"
+
+          echo "=========================================="
+          echo "Home Assistant UXC bundle"
+          echo "=========================================="
+
+          echo "Bundle size:"
+          du -h homeassistant-arm64.tar.gz
+
+          echo "=========================================="
+
+      # ==========================================================
+      # STEP 4: Determine versions & metadata
+      # ==========================================================
+      - name: Determine Release Name & Metadata
+        run: |
+          set -eux
+
+          CURRENT_DATE="$(date +'%Y-%m-%d')"
+
+          # ========================================================
+          # Locate Home Assistant distribution metadata
+          # ========================================================
+          HA_METADATA="$(
+            find \
+              bundle/rootfs/opt/homeassistant/lib \
+              -type f \
+              -path '*/site-packages/homeassistant-*.dist-info/METADATA' \
+              -print \
+              -quit
+          )"
+
+          test -n "$HA_METADATA"
+          test -f "$HA_METADATA"
+
+          # ========================================================
+          # Read Home Assistant version
+          # ========================================================
+          HA_VER="$(
+            sed -n \
+              's/^Version: //p' \
+              "$HA_METADATA" \
+              | head -n 1
+          )"
+
+          test -n "$HA_VER"
+
+          # ========================================================
+          # Python version
+          # ========================================================
+          PY_VER="$(
+            bundle/rootfs/opt/homeassistant/bin/python \
+              --version 2>&1
+          )"
+
+          test -n "$PY_VER"
+
+          # ========================================================
+          # Debian version
+          # ========================================================
+          DEBIAN_VERSION="$(
+            grep '^VERSION_ID=' \
+              bundle/rootfs/etc/os-release \
+              | cut -d'=' -f2 \
+              | tr -d '"'
+          )"
+
+          test -n "$DEBIAN_VERSION"
+
+          OS_VERSION="Debian ${DEBIAN_VERSION} Trixie Slim"
+
+          # ========================================================
+          # Architecture
+          # ========================================================
+          ARCH="$(uname -m)"
+
+          # ========================================================
+          # Display metadata
+          # ========================================================
+          echo "=========================================="
+          echo "Build metadata"
+          echo "=========================================="
+          echo "Home Assistant: ${HA_VER}"
+          echo "Python:         ${PY_VER}"
+          echo "OS:             ${OS_VERSION}"
+          echo "Architecture:   ${ARCH}"
+          echo "Commit:         ${GITHUB_SHA::7}"
+          echo "=========================================="
+
+          # ========================================================
+          # Export GitHub Actions environment
+          # ========================================================
+          echo "RELEASE_NAME=Home Assistant V${HA_VER}-${CURRENT_DATE}" >> "$GITHUB_ENV"
+          echo "BUILD_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "HA_VERSION=${HA_VER}" >> "$GITHUB_ENV"
+          echo "PYTHON_VERSION=${PY_VER}" >> "$GITHUB_ENV"
+          echo "OS_VERSION=${OS_VERSION}" >> "$GITHUB_ENV"
+          echo "ARCH=${ARCH}" >> "$GITHUB_ENV"
+
+      # ==========================================================
+      # STEP 5: Publish release
+      # ==========================================================
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ env.RELEASE_NAME }}
+          tag_name: latest
+          make_latest: true
+          fail_on_unmatched_files: true
+
+          files: |
+            homeassistant-arm64.tar.gz
+
+          body: |
+            Home Assistant UXC Bundle
+
+            - Architecture: ARM64
+            - OS Base: ${{ env.OS_VERSION }}
+            - Python Runtime: ${{ env.PYTHON_VERSION }}
+            - Home Assistant: v${{ env.HA_VERSION }}
+            - Build Commit: ${{ env.BUILD_SHA }}
+            - Runtime: Native ARM64
+            - Container Runtime: UXC
+            - Init System: Home Assistant entrypoint
+            - User: root
+            - Web UI: Port 8123
+            - D-Bus: Host system bus
+            - Avahi: Host Avahi daemon
+            - FFmpeg: Included
+            - Persistent Config: /config
+            - IPv4 Preference: Enabled
+            - Architecture: ${{ env.ARCH }}
