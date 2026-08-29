@@ -1,3 +1,4 @@
+```dockerfile
 # syntax=docker/dockerfile:1
 
 FROM debian:trixie-slim
@@ -46,7 +47,23 @@ RUN apt-get update \
     dbus \
     sudo \
     bash \
+    iproute2 \
  && rm -rf /var/lib/apt/lists/*
+
+# ==========================================================
+# IPv4 PREFERENCE
+#
+# Prefer IPv4 when both IPv4 and IPv6 addresses are available.
+#
+# This does NOT disable IPv6. It simply changes address
+# selection preference for glibc-based applications.
+# ==========================================================
+RUN sed -i \
+    's/^#\?precedence ::ffff:0:0\/96 .*/precedence ::ffff:0:0\/96  100/' \
+    /etc/gai.conf \
+ && grep -q \
+    '^precedence ::ffff:0:0/96  100' \
+    /etc/gai.conf
 
 # ==========================================================
 # UXC FIX
@@ -108,19 +125,23 @@ RUN python3 -m venv /opt/homeassistant \
 # Memory optimisation:
 #
 # PYTHONMALLOC=malloc
-#   Uses the system malloc allocator instead of Python's
-#   default small-object allocator.
+#   Uses system malloc instead of Python's pymalloc.
 #
 # MALLOC_ARENA_MAX=2
-#   Limits glibc malloc arenas and helps reduce retained
-#   allocator memory on a low-RAM system.
+#   Limits glibc malloc arenas.
+#
+# PYTHONASYNCIODEBUG=0
+#   Explicitly keep asyncio debug disabled.
 # ==========================================================
 ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin \
     VIRTUAL_ENV=/opt/homeassistant \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONMALLOC=malloc \
-    MALLOC_ARENA_MAX=2
+    MALLOC_ARENA_MAX=2 \
+    PYTHONASYNCIODEBUG=0 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
 
 # ==========================================================
 # Home Assistant
@@ -137,8 +158,6 @@ RUN set -eux; \
 
 # ==========================================================
 # Persistent Home Assistant directory
-#
-# UXC mounts the host persistent directory over /config.
 # ==========================================================
 RUN mkdir -p \
     /config \
@@ -152,13 +171,7 @@ RUN mkdir -p \
 # IMPORTANT:
 # Do NOT use Tini here.
 #
-# Debian Trixie Tini was found to be incompatible with the
-# OpenWrt UXC execution environment:
-#
-#   __isoc23_strtol: symbol not found
-#   __fprintf_chk: symbol not found
-#
-# Home Assistant therefore runs directly as the main process.
+# UXC runs Home Assistant directly as PID 1.
 # ==========================================================
 RUN cat > /usr/local/bin/homeassistant-entrypoint.sh <<'EOF'
 #!/bin/sh
@@ -188,6 +201,8 @@ echo "Python malloc:  ${PYTHONMALLOC:-default}"
 
 echo "Malloc arenas:  ${MALLOC_ARENA_MAX:-default}"
 
+echo "IPv4 preference: enabled"
+
 echo "UID:            $(id -u)"
 echo "GID:            $(id -g)"
 echo "Workdir:        $(pwd)"
@@ -206,8 +221,6 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 
 # ==========================================================
 # Build validation
-#
-# Tini intentionally NOT included.
 # ==========================================================
 RUN set -eux; \
     test -x /opt/homeassistant/bin/python; \
@@ -217,22 +230,25 @@ RUN set -eux; \
     test -x /usr/bin/python3; \
     test -x /usr/bin/bash; \
     test -x /usr/bin/ffmpeg; \
+    test -x /usr/bin/ip; \
     test -x /usr/bin/sudo; \
     test -x /usr/local/bin/homeassistant-entrypoint.sh; \
     /opt/homeassistant/bin/python --version; \
     /opt/homeassistant/bin/python -c "from homeassistant.const import __version__; print('Home Assistant OK:', __version__)"; \
     /opt/homeassistant/bin/hass --version; \
-    ffmpeg -version | head -n 1
+    ffmpeg -version | head -n 1; \
+    grep -q '^precedence ::ffff:0:0/96  100' /etc/gai.conf
 
 # ==========================================================
 # Final runtime environment
 # ==========================================================
 ENV HOME=/root \
-    TZ=UTC \
+    TZ=Europe/London \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONMALLOC=malloc \
     MALLOC_ARENA_MAX=2 \
+    PYTHONASYNCIODEBUG=0 \
     TMPDIR=/config/tmp \
     TEMP=/config/tmp \
     TMP=/config/tmp \
