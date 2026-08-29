@@ -1,15 +1,11 @@
 {
 "ociVersion": "1.0.2",
 "hostname": "homeassistant",
-
 "annotations": {
 "org.opencontainers.image.source": "https://github.com/micpro7/openwrt-uxc-homeassistant"
 },
-
 "process": {
 "terminal": false,
-
-```
 "user": {
   "uid": 0,
   "gid": 0
@@ -103,23 +99,17 @@
 ],
 
 "noNewPrivileges": false
-```
-
 },
-
 "root": {
 "path": "rootfs",
 "readonly": false
 },
-
 "mounts": [
 {
 "destination": "/proc",
 "type": "proc",
 "source": "proc"
 },
-
-```
 {
   "destination": "/dev",
   "type": "tmpfs",
@@ -209,18 +199,13 @@
     "rw"
   ]
 }
-```
-
 ],
-
 "linux": {
 "resources": {
 "memory": {
 "limit": 536870912
 }
 },
-
-```
 "namespaces": [
   {
     "type": "pid"
@@ -257,7 +242,5 @@
   "/proc/sys",
   "/proc/sysrq-trigger"
 ]
-```
-
 }
 }
