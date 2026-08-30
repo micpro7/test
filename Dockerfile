@@ -4,7 +4,7 @@
 # Home Assistant UXC - ARM64
 #
 # Target:
-#   Linksys MX5300
+#   1GB RAM Routers
 #   OpenWrt UXC
 #   ARM64 / aarch64
 #
