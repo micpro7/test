@@ -11,51 +11,70 @@ LABEL org.opencontainers.image.title="openwrt-uxc-homeassistant" \
 # ==========================================================
 # System dependencies
 # ==========================================================
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    wget \
-    tzdata \
-    python3 \
-    python3-dev \
-    python3-pip \
-    python3-venv \
-    python3-setuptools \
-    python3-wheel \
-    build-essential \
-    gcc \
-    g++ \
-    make \
-    git \
-    pkg-config \
-    libffi-dev \
-    libssl-dev \
-    libjpeg-dev \
-    zlib1g-dev \
-    libopenjp2-7-dev \
-    libtiff-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    libudev-dev \
-    libdbus-1-dev \
-    libavahi-client-dev \
-    libavahi-compat-libdnssd-dev \
-    avahi-utils \
-    ffmpeg \
-    dbus \
-    sudo \
-    bash \
-    iproute2 \
- && rm -rf /var/lib/apt/lists/*
+#
+# Build dependencies are installed temporarily and removed
+# after Home Assistant has been installed.
+#
+# Runtime dependencies are kept.
+# ==========================================================
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        wget \
+        tzdata \
+        python3 \
+        python3-venv \
+        python3-pip \
+        ffmpeg \
+        dbus \
+        sudo \
+        bash \
+        iproute2 \
+        libffi8 \
+        libssl3 \
+        libjpeg62-turbo \
+        zlib1g \
+        libopenjp2-7 \
+        libtiff6 \
+        libxml2 \
+        libxslt1.1 \
+        libudev1 \
+        libdbus-1-3 \
+        libavahi-client3 \
+        libavahi-compat-libdnssd1 \
+        avahi-utils; \
+    apt-get install -y --no-install-recommends \
+        python3-dev \
+        python3-setuptools \
+        python3-wheel \
+        build-essential \
+        gcc \
+        g++ \
+        make \
+        git \
+        pkg-config \
+        libffi-dev \
+        libssl-dev \
+        libjpeg-dev \
+        zlib1g-dev \
+        libopenjp2-7-dev \
+        libtiff-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libudev-dev \
+        libdbus-1-dev \
+        libavahi-client-dev \
+        libavahi-compat-libdnssd-dev; \
+    rm -rf /var/lib/apt/lists/*
 
 # ==========================================================
 # IPv4 PREFERENCE
 #
 # Prefer IPv4 when both IPv4 and IPv6 addresses are available.
 #
-# This does NOT disable IPv6. It simply changes address
-# selection preference for glibc-based applications.
+# This does NOT disable IPv6.
 # ==========================================================
 RUN sed -i \
     's/^#\?precedence ::ffff:0:0\/96 .*/precedence ::ffff:0:0\/96  100/' \
@@ -67,8 +86,8 @@ RUN sed -i \
 # ==========================================================
 # UXC FIX
 #
-# Normal sudo expects setresuid/setresgid behaviour which
-# UXC does not necessarily provide.
+# UXC does not necessarily provide the setresuid/setresgid
+# behaviour expected by normal sudo.
 #
 # Replace sudo with a lightweight direct-execution wrapper.
 # ==========================================================
@@ -108,6 +127,22 @@ EOF
 RUN chmod 0755 /usr/bin/sudo
 
 # ==========================================================
+# go2rtc
+#
+# Home Assistant's go2rtc integration expects a native
+# executable named "go2rtc" to exist in PATH.
+#
+# Download the latest official Linux ARM64 binary.
+# ==========================================================
+RUN set -eux; \
+    mkdir -p /usr/local/bin; \
+    curl -fsSL \
+        -o /usr/local/bin/go2rtc \
+        https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_arm64; \
+    chmod 0755 /usr/local/bin/go2rtc; \
+    /usr/local/bin/go2rtc --version
+
+# ==========================================================
 # Python virtual environment
 #
 # Keep Home Assistant isolated from Debian system Python.
@@ -121,16 +156,17 @@ RUN python3 -m venv /opt/homeassistant \
 # ==========================================================
 # Runtime environment
 #
-# Memory optimisation:
-#
 # PYTHONMALLOC=malloc
 #   Uses system malloc instead of Python's pymalloc.
 #
 # MALLOC_ARENA_MAX=2
 #   Limits glibc malloc arenas.
 #
+# PYTHONOPTIMIZE=1
+#   Enables basic Python bytecode optimisation.
+#
 # PYTHONASYNCIODEBUG=0
-#   Explicitly keep asyncio debug disabled.
+#   Explicitly keep asyncio debugging disabled.
 # ==========================================================
 ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin \
     VIRTUAL_ENV=/opt/homeassistant \
@@ -139,6 +175,8 @@ ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbi
     PYTHONMALLOC=malloc \
     MALLOC_ARENA_MAX=2 \
     PYTHONASYNCIODEBUG=0 \
+    PYTHONOPTIMIZE=1 \
+    PYTHONHASHSEED=random \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
@@ -156,6 +194,59 @@ RUN set -eux; \
     fi
 
 # ==========================================================
+# Remove build-only packages
+#
+# These are no longer required after Home Assistant has
+# been installed into the virtual environment.
+#
+# This reduces image/rootfs size and background package
+# footprint without removing the runtime libraries above.
+# ==========================================================
+RUN set -eux; \
+    apt-get update; \
+    apt-get purge -y \
+        python3-dev \
+        python3-setuptools \
+        python3-wheel \
+        build-essential \
+        gcc \
+        g++ \
+        make \
+        git \
+        pkg-config \
+        libffi-dev \
+        libssl-dev \
+        libjpeg-dev \
+        zlib1g-dev \
+        libopenjp2-7-dev \
+        libtiff-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libudev-dev \
+        libdbus-1-dev \
+        libavahi-client-dev \
+        libavahi-compat-libdnssd-dev; \
+    apt-get autoremove -y; \
+    apt-get clean; \
+    rm -rf \
+        /var/lib/apt/lists/* \
+        /var/cache/apt/* \
+        /root/.cache \
+        /tmp/*
+
+# ==========================================================
+# Remove Python caches
+# ==========================================================
+RUN find /opt/homeassistant \
+        -type d \
+        \( -name '__pycache__' -o -name '.pytest_cache' \) \
+        -prune -exec rm -rf {} + \
+ && find /opt/homeassistant \
+        -type f \
+        \( -name '*.pyc' -o -name '*.pyo' \) \
+        -delete
+
+# ==========================================================
 # Persistent Home Assistant directory
 # ==========================================================
 RUN mkdir -p \
@@ -166,9 +257,6 @@ RUN mkdir -p \
 
 # ==========================================================
 # Home Assistant runtime entrypoint
-#
-# IMPORTANT:
-# Do NOT use Tini here.
 #
 # UXC runs Home Assistant directly as PID 1.
 # ==========================================================
@@ -196,9 +284,13 @@ echo "Home Assistant: $(/opt/homeassistant/bin/python -c 'from homeassistant.con
 
 echo "HA executable:  $(/opt/homeassistant/bin/hass --version 2>&1)"
 
+echo "go2rtc:         $(/usr/local/bin/go2rtc --version 2>&1)"
+
 echo "Python malloc:  ${PYTHONMALLOC:-default}"
 
 echo "Malloc arenas:  ${MALLOC_ARENA_MAX:-default}"
+
+echo "Python optimize:${PYTHONOPTIMIZE:-default}"
 
 echo "IPv4 preference: enabled"
 
@@ -231,10 +323,12 @@ RUN set -eux; \
     test -x /usr/bin/ffmpeg; \
     test -x /usr/bin/ip; \
     test -x /usr/bin/sudo; \
+    test -x /usr/local/bin/go2rtc; \
     test -x /usr/local/bin/homeassistant-entrypoint.sh; \
     /opt/homeassistant/bin/python --version; \
     /opt/homeassistant/bin/python -c "from homeassistant.const import __version__; print('Home Assistant OK:', __version__)"; \
     /opt/homeassistant/bin/hass --version; \
+    /usr/local/bin/go2rtc --version; \
     ffmpeg -version | head -n 1; \
     grep -q '^precedence ::ffff:0:0/96  100' /etc/gai.conf
 
@@ -248,6 +342,8 @@ ENV HOME=/root \
     PYTHONMALLOC=malloc \
     MALLOC_ARENA_MAX=2 \
     PYTHONASYNCIODEBUG=0 \
+    PYTHONOPTIMIZE=1 \
+    PYTHONHASHSEED=random \
     TMPDIR=/config/tmp \
     TEMP=/config/tmp \
     TMP=/config/tmp \
@@ -264,8 +360,6 @@ WORKDIR /config
 EXPOSE 8123
 
 # ==========================================================
-# Docker runtime default
-#
-# UXC config.json uses this same entrypoint directly.
+# UXC runtime entrypoint
 # ==========================================================
 ENTRYPOINT ["/usr/local/bin/homeassistant-entrypoint.sh"]
