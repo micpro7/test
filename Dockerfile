@@ -4,13 +4,19 @@
 # Home Assistant UXC - ARM64
 #
 # Target:
-#   1GB RAM Routers
+#   1GB RAM Routers 
 #   OpenWrt UXC
 #   ARM64 / aarch64
 #
 # RAM optimisation is prioritised over image size.
 # ==========================================================
 
+# ==========================================================
+# Official go2rtc binary source
+#
+# Home Assistant's own Dockerfile uses the go2rtc image and
+# copies the binary to /bin/go2rtc.
+# ==========================================================
 FROM ghcr.io/alexxit/go2rtc:latest AS go2rtc
 
 FROM debian:trixie-slim
@@ -24,16 +30,25 @@ LABEL org.opencontainers.image.title="openwrt-uxc-homeassistant" \
 # ==========================================================
 # System dependencies
 #
-# Keep build tools intentionally.
+# RAM is more important than image size.
 #
-# Home Assistant installs some integration dependencies
-# dynamically at runtime and several require native ARM64
-# compilation.
+# Native compilation is intentionally supported because
+# Home Assistant can install integration dependencies at
+# runtime.
 #
-# Examples from your logs:
+# Packages specifically required by errors observed:
+#
 #   netifaces
 #   pymicro-vad
 #   pyspeex-noise
+#
+# These require:
+#
+#   gcc
+#   g++
+#   Python development headers
+#   libc development headers
+#   make/build tooling
 # ==========================================================
 
 RUN apt-get update \
@@ -85,14 +100,13 @@ RUN apt-get update \
 # ==========================================================
 # ARM64 compiler compatibility
 #
-# HA/uv can invoke these names while compiling native
-# Python modules:
+# HA's uv build environment may invoke:
 #
 #   aarch64-linux-gnu-gcc
 #   aarch64-linux-gnu-g++
 #
-# We are compiling natively on ARM64, so aliases to the
-# native compiler are sufficient.
+# This container is already ARM64, so these simply point to
+# the native compilers.
 # ==========================================================
 
 RUN ln -sf /usr/bin/gcc /usr/local/bin/aarch64-linux-gnu-gcc \
@@ -105,8 +119,7 @@ RUN ln -sf /usr/bin/gcc /usr/local/bin/aarch64-linux-gnu-gcc \
 # ==========================================================
 # IPv4 preference
 #
-# Prefer IPv4 when both IPv4 and IPv6 addresses are
-# available.
+# Prefer IPv4 when both IPv4 and IPv6 addresses exist.
 #
 # IPv6 remains enabled.
 # ==========================================================
@@ -121,10 +134,10 @@ RUN sed -i \
 # ==========================================================
 # UXC sudo compatibility
 #
-# UXC does not necessarily permit the setresuid/setresgid
-# behaviour expected by normal sudo.
+# Normal sudo can require setresuid/setresgid behaviour
+# which is restricted by UXC.
 #
-# Keep sudo functionality but avoid those syscalls.
+# Keep sudo available while avoiding those syscalls.
 # ==========================================================
 
 RUN rm -f /usr/bin/sudo \
@@ -173,25 +186,31 @@ RUN python3 -m venv /opt/homeassistant \
       wheel
 
 # ==========================================================
-# Runtime environment - RAM optimisation
+# Runtime environment
+#
+# RAM optimisation
+# ==========================================================
 #
 # PYTHONMALLOC=malloc
-#   Uses glibc malloc rather than Python pymalloc.
+#   Uses glibc malloc instead of Python pymalloc.
 #
 # MALLOC_ARENA_MAX=1
-#   Minimise glibc arena duplication.
+#   Aggressively limits glibc malloc arenas.
 #
-# This is deliberately 1 rather than 2 because RAM is the
-# primary constraint on this router.
+# PYTHONDONTWRITEBYTECODE=1
+#   Prevents .pyc generation.
 #
 # PYTHONASYNCIODEBUG=0
-#   Never run asyncio debug mode.
+#   Ensures asyncio debug mode remains disabled.
 #
-# PYTHONDONTWRITEBYTECODE
-#   Avoid .pyc generation.
+# UV_NO_CACHE=1
+#   Prevents uv package cache retention.
 #
-# UV_NO_CACHE
-#   Prevent uv from maintaining package caches.
+# PIP_NO_CACHE_DIR=1
+#   Prevents pip cache retention.
+#
+# PYTHONUNBUFFERED=1
+#   Normal HA logging behaviour.
 # ==========================================================
 
 ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin \
@@ -209,16 +228,15 @@ ENV PATH=/opt/homeassistant/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbi
     TZ=Europe/London
 
 # ==========================================================
-# Optional compression acceleration
+# Compression acceleration
 #
-# aiohttp_fast_zlib reported:
+# Prevents:
 #
-#   zlib_ng and isal are not available
+#   zlib_ng and isal are not available, falling back to zlib
 #
-# Install both into the HA virtual environment.
-#
-# These can reduce CPU work for HTTP compression and avoid
-# the fallback warning.
+# These are runtime Python modules and can improve compressed
+# HTTP handling without requiring the system zlib package
+# to be replaced.
 # ==========================================================
 
 RUN /opt/homeassistant/bin/pip install \
@@ -228,12 +246,6 @@ RUN /opt/homeassistant/bin/pip install \
 
 # ==========================================================
 # Home Assistant
-#
-# stable/latest:
-#   Install current stable release.
-#
-# Specific version:
-#   HOMEASSISTANT_VERSION=x.y.z
 # ==========================================================
 
 RUN set -eux; \
@@ -250,14 +262,16 @@ RUN set -eux; \
 # ==========================================================
 # go2rtc
 #
-# Home Assistant's official container layout places the
-# go2rtc binary at /bin/go2rtc.
+# Home Assistant expects the go2rtc executable to exist in
+# the container PATH.
 #
-# This fixes:
+# Official HA container layout:
 #
-#   Could not find go2rtc docker binary
+#   /bin/go2rtc
 #
-# The source image is multi-architecture and provides ARM64.
+# Do NOT install OpenWrt's host go2rtc package for this.
+# The HA-managed go2rtc instance should live inside the same
+# UXC namespace/container.
 # ==========================================================
 
 COPY --from=go2rtc /usr/local/bin/go2rtc /bin/go2rtc
@@ -276,7 +290,7 @@ RUN mkdir -p \
     /config/backup
 
 # ==========================================================
-# Runtime entrypoint
+# Home Assistant runtime entrypoint
 # ==========================================================
 
 RUN cat > /usr/local/bin/homeassistant-entrypoint.sh <<'EOF'
@@ -338,6 +352,17 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 
 # ==========================================================
 # Build validation
+#
+# IMPORTANT:
+# Do NOT test:
+#
+#   import go2rtc_client
+#
+# here.
+#
+# Home Assistant itself declares go2rtc-client as an
+# integration requirement. The binary requirement is the
+# important part for this container.
 # ==========================================================
 
 RUN set -eux; \
@@ -353,6 +378,7 @@ RUN set -eux; \
     test -x /usr/bin/bash; \
     test -x /usr/bin/ffmpeg; \
     test -x /usr/bin/ip; \
+    test -x /usr/bin/ping; \
     test -x /usr/bin/sudo; \
     test -x /usr/local/bin/homeassistant-entrypoint.sh; \
     test -x /bin/go2rtc; \
@@ -372,7 +398,7 @@ RUN set -eux; \
         "import aiohttp_fast_zlib; print('aiohttp-fast-zlib OK')"; \
     \
     /opt/homeassistant/bin/python -c \
-        "import go2rtc_client; print('go2rtc-client OK')"; \
+        "import importlib.metadata as m; print('go2rtc-client:', m.version('go2rtc-client'))"; \
     \
     /opt/homeassistant/bin/hass --version; \
     \
@@ -380,14 +406,16 @@ RUN set -eux; \
     \
     ffmpeg -version | head -n 1; \
     \
+    gcc --version | head -n 1; \
+    \
+    g++ --version | head -n 1; \
+    \
     grep -q \
         '^precedence ::ffff:0:0/96  100' \
         /etc/gai.conf
 
 # ==========================================================
 # Final runtime environment
-#
-# Repeated here so the final image configuration is explicit.
 # ==========================================================
 
 ENV HOME=/root \
