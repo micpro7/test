@@ -45,7 +45,7 @@ LABEL org.opencontainers.image.title="openwrt-uxc-homeassistant" \
 # Keep the compiler/toolchain because Home Assistant and
 # integrations can require native ARM64 Python extensions.
 #
-# IMPORTANT runtime libraries:
+# Important runtime libraries:
 #
 # libturbojpeg0
 #   Native TurboJPEG runtime used by Home Assistant camera
@@ -56,10 +56,10 @@ LABEL org.opencontainers.image.title="openwrt-uxc-homeassistant" \
 #   for DHCP packet monitoring.
 #
 # libcap2-bin
-#   Capability inspection/support for networking integrations.
+#   Linux capability inspection/support.
 #
-# The corresponding -dev packages are retained because this
-# image intentionally keeps the native build environment.
+# PyTurboJPEG is installed separately into the Home Assistant
+# virtual environment below.
 # ==========================================================
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     # Certificates / downloads / time
@@ -104,7 +104,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libpcap0.8 \
     libpcap-dev \
     # ======================================================
-    # Linux capabilities / networking
+    # Linux capabilities
     # ======================================================
     libcap2-bin \
     # ======================================================
@@ -147,6 +147,9 @@ RUN if grep -q '^#?precedence ::ffff:0:0/96' /etc/gai.conf; then \
 
 # ==========================================================
 # UXC sudo compatibility
+#
+# UXC blocks the setresuid syscall used by the normal sudo
+# binary. Replace it with a lightweight command passthrough.
 # ==========================================================
 RUN rm -f /usr/bin/sudo \
     && cat > /usr/bin/sudo <<'EOF'
@@ -235,6 +238,16 @@ RUN /opt/homeassistant/bin/pip install \
     "go2rtc-client==0.4.0"
 
 # ==========================================================
+# Camera JPEG acceleration
+#
+# PyTurboJPEG provides the Python binding.
+# libturbojpeg0 provides the native TurboJPEG library.
+# ==========================================================
+RUN /opt/homeassistant/bin/pip install \
+    --no-cache-dir \
+    PyTurboJPEG
+
+# ==========================================================
 # go2rtc ARM64 executable
 # ==========================================================
 COPY --from=go2rtc /usr/local/bin/go2rtc /bin/go2rtc
@@ -286,7 +299,7 @@ echo "Config:          /config"
 echo "========================================================"
 
 exec /opt/homeassistant/bin/hass \
---config /config
+    --config /config
 EOF
 
 RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
@@ -294,8 +307,11 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 # ==========================================================
 # Build validation
 #
-# Validate the native libraries during the image build.
-# This prevents a missing shared library from reaching UXC.
+# Validate the native libraries and Python bindings during
+# the image build.
+#
+# This prevents missing runtime dependencies from reaching
+# the UXC container.
 # ==========================================================
 RUN set -eux; \
     # ------------------------------------------------------
@@ -336,13 +352,14 @@ RUN set -eux; \
     /opt/homeassistant/bin/python -c "import go2rtc_client; print('go2rtc-client import OK')"; \
     /opt/homeassistant/bin/python -c "import importlib.metadata as m; print('go2rtc-client version:', m.version('go2rtc-client'))"; \
     # ------------------------------------------------------
-    # TurboJPEG Python binding + native library
+    # PyTurboJPEG + native TurboJPEG
     # ------------------------------------------------------
-    /opt/homeassistant/bin/python -c "from turbojpeg import TurboJPEG; jpeg=TurboJPEG(); print('TurboJPEG OK')"; \
+    /opt/homeassistant/bin/python -c "import turbojpeg; print('PyTurboJPEG OK:', turbojpeg.__version__ if hasattr(turbojpeg, '__version__') else 'installed')"; \
+    /opt/homeassistant/bin/python -c "from turbojpeg import TurboJPEG; jpeg=TurboJPEG(); print('TurboJPEG native library OK')"; \
     # ------------------------------------------------------
     # libpcap
     # ------------------------------------------------------
-    python3 -c "import ctypes; ctypes.CDLL('libpcap.so.0.8'); print('libpcap OK')"; \
+    /opt/homeassistant/bin/python -c "import ctypes; ctypes.CDLL('libpcap.so.0.8'); print('libpcap OK')"; \
     # ------------------------------------------------------
     # Home Assistant / media
     # ------------------------------------------------------
