@@ -44,6 +44,22 @@ LABEL org.opencontainers.image.title="openwrt-uxc-homeassistant" \
 #
 # Keep the compiler/toolchain because Home Assistant and
 # integrations can require native ARM64 Python extensions.
+#
+# IMPORTANT runtime libraries:
+#
+# libturbojpeg0
+#   Native TurboJPEG runtime used by Home Assistant camera
+#   snapshot processing.
+#
+# libpcap0.8
+#   Native packet-capture library required by aiodhcpwatcher
+#   for DHCP packet monitoring.
+#
+# libcap2-bin
+#   Capability inspection/support for networking integrations.
+#
+# The corresponding -dev packages are retained because this
+# image intentionally keeps the native build environment.
 # ==========================================================
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     # Certificates / downloads / time
@@ -77,7 +93,23 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     libxslt1-dev \
     libudev-dev \
     libdbus-1-dev \
+    # ======================================================
+    # JPEG / camera support
+    # ======================================================
+    libturbojpeg0 \
+    libturbojpeg0-dev \
+    # ======================================================
+    # Packet capture / DHCP watcher
+    # ======================================================
+    libpcap0.8 \
+    libpcap-dev \
+    # ======================================================
+    # Linux capabilities / networking
+    # ======================================================
+    libcap2-bin \
+    # ======================================================
     # Avahi / mDNS / HomeKit / discovery
+    # ======================================================
     libavahi-client-dev \
     libavahi-compat-libdnssd-dev \
     avahi-utils \
@@ -242,6 +274,8 @@ echo "Python:          $(/opt/homeassistant/bin/python --version 2>&1)"
 echo "Home Assistant:  $(/opt/homeassistant/bin/python -c 'from homeassistant.const import __version__; print(__version__)')"
 echo "HA executable:   $(/opt/homeassistant/bin/hass --version 2>&1)"
 echo "go2rtc:          $(/bin/go2rtc --version 2>&1)"
+echo "TurboJPEG:       $(ldconfig -p 2>/dev/null | grep -m1 'libturbojpeg' || echo 'not found')"
+echo "libpcap:         $(ldconfig -p 2>/dev/null | grep -m1 'libpcap.so' || echo 'not found')"
 echo "Python malloc:   ${PYTHONMALLOC:-default}"
 echo "Malloc arenas:   ${MALLOC_ARENA_MAX:-default}"
 echo "UV cache:        disabled"
@@ -259,8 +293,14 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 
 # ==========================================================
 # Build validation
+#
+# Validate the native libraries during the image build.
+# This prevents a missing shared library from reaching UXC.
 # ==========================================================
 RUN set -eux; \
+    # ------------------------------------------------------
+    # Basic executables
+    # ------------------------------------------------------
     test -x /opt/homeassistant/bin/python; \
     test -x /opt/homeassistant/bin/python3; \
     test -x /opt/homeassistant/bin/pip; \
@@ -277,6 +317,17 @@ RUN set -eux; \
     test -x /usr/bin/sudo; \
     test -x /usr/local/bin/homeassistant-entrypoint.sh; \
     test -x /bin/go2rtc; \
+    # ------------------------------------------------------
+    # Native libraries
+    # ------------------------------------------------------
+    ldconfig -p | grep -q 'libturbojpeg.so'; \
+    ldconfig -p | grep -q 'libpcap.so'; \
+    ldconfig -p | grep -q 'libjpeg.so'; \
+    ldconfig -p | grep -q 'libavahi-client.so'; \
+    ldconfig -p | grep -q 'libdbus-1.so'; \
+    # ------------------------------------------------------
+    # Python
+    # ------------------------------------------------------
     /opt/homeassistant/bin/python --version; \
     /opt/homeassistant/bin/python -c "from homeassistant.const import __version__; print('Home Assistant OK:', __version__)"; \
     /opt/homeassistant/bin/python -c "import zlib_ng; print('zlib-ng OK')"; \
@@ -284,11 +335,30 @@ RUN set -eux; \
     /opt/homeassistant/bin/python -c "import aiohttp_fast_zlib; print('aiohttp-fast-zlib OK')"; \
     /opt/homeassistant/bin/python -c "import go2rtc_client; print('go2rtc-client import OK')"; \
     /opt/homeassistant/bin/python -c "import importlib.metadata as m; print('go2rtc-client version:', m.version('go2rtc-client'))"; \
+    # ------------------------------------------------------
+    # TurboJPEG Python binding + native library
+    # ------------------------------------------------------
+    /opt/homeassistant/bin/python -c "from turbojpeg import TurboJPEG; jpeg=TurboJPEG(); print('TurboJPEG OK')"; \
+    # ------------------------------------------------------
+    # libpcap
+    # ------------------------------------------------------
+    python3 -c "import ctypes; ctypes.CDLL('libpcap.so.0.8'); print('libpcap OK')"; \
+    # ------------------------------------------------------
+    # Home Assistant / media
+    # ------------------------------------------------------
     /opt/homeassistant/bin/hass --version; \
     /bin/go2rtc --version; \
     ffmpeg -version | head -n 1; \
     gcc --version | head -n 1; \
     g++ --version | head -n 1; \
+    # ------------------------------------------------------
+    # Network capability tools
+    # ------------------------------------------------------
+    command -v capsh; \
+    capsh --print >/dev/null 2>&1 || true; \
+    # ------------------------------------------------------
+    # IPv4 preference
+    # ------------------------------------------------------
     grep -q '^precedence ::ffff:0:0/96  100' /etc/gai.conf
 
 # ==========================================================
