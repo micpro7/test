@@ -309,14 +309,8 @@ RUN chmod 0755 /usr/local/bin/homeassistant-entrypoint.sh
 #
 # Validate the native libraries and Python bindings during
 # the image build.
-#
-# This prevents missing runtime dependencies from reaching
-# the UXC container.
 # ==========================================================
 RUN set -eux; \
-    # ------------------------------------------------------
-    # Basic executables
-    # ------------------------------------------------------
     test -x /opt/homeassistant/bin/python; \
     test -x /opt/homeassistant/bin/python3; \
     test -x /opt/homeassistant/bin/pip; \
@@ -333,17 +327,11 @@ RUN set -eux; \
     test -x /usr/bin/sudo; \
     test -x /usr/local/bin/homeassistant-entrypoint.sh; \
     test -x /bin/go2rtc; \
-    # ------------------------------------------------------
-    # Native libraries
-    # ------------------------------------------------------
     ldconfig -p | grep -q 'libturbojpeg.so'; \
     ldconfig -p | grep -q 'libpcap.so'; \
     ldconfig -p | grep -q 'libjpeg.so'; \
     ldconfig -p | grep -q 'libavahi-client.so'; \
     ldconfig -p | grep -q 'libdbus-1.so'; \
-    # ------------------------------------------------------
-    # Python
-    # ------------------------------------------------------
     /opt/homeassistant/bin/python --version; \
     /opt/homeassistant/bin/python -c "from homeassistant.const import __version__; print('Home Assistant OK:', __version__)"; \
     /opt/homeassistant/bin/python -c "import zlib_ng; print('zlib-ng OK')"; \
@@ -351,31 +339,16 @@ RUN set -eux; \
     /opt/homeassistant/bin/python -c "import aiohttp_fast_zlib; print('aiohttp-fast-zlib OK')"; \
     /opt/homeassistant/bin/python -c "import go2rtc_client; print('go2rtc-client import OK')"; \
     /opt/homeassistant/bin/python -c "import importlib.metadata as m; print('go2rtc-client version:', m.version('go2rtc-client'))"; \
-    # ------------------------------------------------------
-    # PyTurboJPEG + native TurboJPEG
-    # ------------------------------------------------------
     /opt/homeassistant/bin/python -c "import turbojpeg; print('PyTurboJPEG OK:', turbojpeg.__version__ if hasattr(turbojpeg, '__version__') else 'installed')"; \
     /opt/homeassistant/bin/python -c "from turbojpeg import TurboJPEG; jpeg=TurboJPEG(); print('TurboJPEG native library OK')"; \
-    # ------------------------------------------------------
-    # libpcap
-    # ------------------------------------------------------
     /opt/homeassistant/bin/python -c "import ctypes; ctypes.CDLL('libpcap.so.0.8'); print('libpcap OK')"; \
-    # ------------------------------------------------------
-    # Home Assistant / media
-    # ------------------------------------------------------
     /opt/homeassistant/bin/hass --version; \
     /bin/go2rtc --version; \
     ffmpeg -version | head -n 1; \
     gcc --version | head -n 1; \
     g++ --version | head -n 1; \
-    # ------------------------------------------------------
-    # Network capability tools
-    # ------------------------------------------------------
     command -v capsh; \
     capsh --print >/dev/null 2>&1 || true; \
-    # ------------------------------------------------------
-    # IPv4 preference
-    # ------------------------------------------------------
     grep -q '^precedence ::ffff:0:0/96  100' /etc/gai.conf
 
 # ==========================================================
